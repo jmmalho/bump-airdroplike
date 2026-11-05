@@ -36,6 +36,7 @@ final class Beacon {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private Runnable timeout;
     private Runnable trigger;
+    private Runnable scanFailure;
     private AdvertiseCallback advCb;
     private ScanCallback scanCb;
 
@@ -51,14 +52,20 @@ final class Beacon {
         return data;
     }
     @SuppressLint("MissingPermission") boolean advertise(String token) {
+        return advertise(token, false);
+    }
+
+    /** Balanced mode only while a trusted peer is actively sharing; idle stays low power. */
+    @SuppressLint("MissingPermission") boolean advertise(String token, boolean activeShare) {
         byte[] bytes = parse(token);
         if (adapter == null || !adapter.isEnabled() || bytes == null) return false;
+        stopAdvertising();
         advertiser = adapter.getBluetoothLeAdvertiser();
         if (advertiser == null) return false;
         AdvertiseData data = new AdvertiseData.Builder()
                 .addServiceData(UUID_SERVICE, bytes).setIncludeDeviceName(false).build();
         AdvertiseSettings settings = new AdvertiseSettings.Builder()
-                .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_POWER)
+                .setAdvertiseMode(activeShare ? AdvertiseSettings.ADVERTISE_MODE_BALANCED : AdvertiseSettings.ADVERTISE_MODE_LOW_POWER)
                 .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_LOW)
                 .setConnectable(false).build();
         advCb = new AdvertiseCallback() {
@@ -75,17 +82,21 @@ final class Beacon {
         broadcasting = false;
         advCb = null;
     }
-    @SuppressLint("MissingPermission") boolean listen(String token, Runnable onNear) {
+    @SuppressLint("MissingPermission") boolean listen(String token, Runnable onNear, Runnable onUnavailable) {
         byte[] bytes = parse(token);
         if (adapter == null || !adapter.isEnabled() || bytes == null) return false;
         stopScan();
         scanner = adapter.getBluetoothLeScanner();
         if (scanner == null) return false;
         trigger = onNear;
+        scanFailure = onUnavailable;
         listening = true;
         gate = new ProximityGate(Prefs.sensitivity(context));
         ScanFilter filter = new ScanFilter.Builder().setServiceData(UUID_SERVICE, bytes).build();
-        ScanSettings settings = new ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build();
+        ScanSettings settings = new ScanSettings.Builder()
+                .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+                .setReportDelay(0L).build();
         scanCb = new ScanCallback() {
             @Override public void onScanResult(int callbackType, ScanResult result) {
                 if (!listening || result == null) return;
@@ -95,12 +106,22 @@ final class Beacon {
                     handler.post(onNear);
                 }
             }
-            @Override public void onScanFailed(int code) { stopScan(); }
+            @Override public void onScanFailed(int code) {
+                if (!listening) return;
+                Runnable failure = scanFailure;
+                stopScan();
+                if (failure != null) handler.post(failure);
+            }
         };
         try {
             scanner.startScan(Collections.singletonList(filter), settings, scanCb);
-            timeout = this::stopScan;
-            handler.postDelayed(timeout, 60000);
+            timeout = () -> {
+                if (!listening) return;
+                Runnable failure = scanFailure;
+                stopScan();
+                if (failure != null) failure.run();
+            };
+            handler.postDelayed(timeout, 45000);
             return true;
         } catch (Exception e) { stopScan(); return false; }
     }
@@ -111,5 +132,6 @@ final class Beacon {
             try { scanner.stopScan(scanCb); } catch (Exception ignored) { }
         }
         scanCb = null;
+        scanFailure = null;
     }
 }

@@ -37,7 +37,7 @@ final class Prefs {
     static void sounds(Context c, boolean enabled) { p(c).edit().putBoolean("sound_fx", enabled).apply(); }
     static boolean haptics(Context c) { return p(c).getBoolean("haptic_fx", true); }
     static void haptics(Context c, boolean enabled) { p(c).edit().putBoolean("haptic_fx", enabled).apply(); }
-    static int sensitivity(Context c) { return p(c).getInt("rssi_threshold", -58); }
+    static int sensitivity(Context c) { return p(c).getInt("rssi_threshold", -68); }
     static void sensitivity(Context c, int threshold) { p(c).edit().putInt("rssi_threshold", threshold).apply(); }
     static void forgetAll(Context c) {
         SharedPreferences.Editor edit = p(c).edit();

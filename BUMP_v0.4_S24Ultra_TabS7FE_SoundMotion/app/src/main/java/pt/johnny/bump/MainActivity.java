@@ -26,7 +26,7 @@ import org.json.JSONObject;
 
 public final class MainActivity extends Activity {
     private static WeakReference<MainActivity> resumed = new WeakReference<>(null);
-    private static final int BG = Color.rgb(245, 249, 255);
+    private static final int BG = Color.rgb(239, 246, 255);
     private static final int INK = Color.rgb(17, 42, 77);
     private static final int MUTED = Color.rgb(102, 124, 157);
     private static final int BLUE = Color.rgb(35, 115, 247);
@@ -54,7 +54,8 @@ public final class MainActivity extends Activity {
         LinearLayout c = new LinearLayout(this);
         c.setOrientation(LinearLayout.VERTICAL);
         c.setPadding(dp(22), dp(20), dp(22), dp(20));
-        c.setBackground(shape(Color.WHITE, 23));
+        c.setBackground(GlassStyle.panel(this, 26));
+        c.setElevation(dp(5));
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
         p.topMargin = dp(13);
         body.addView(c, p);
@@ -71,7 +72,7 @@ public final class MainActivity extends Activity {
         b.setTextSize(15);
         b.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         b.setTextColor(bg == BLUE ? Color.WHITE : INK);
-        b.setBackground(shape(bg, 16));
+        b.setBackground(bg == BLUE ? GlassStyle.action(this, 17) : GlassStyle.secondary(this, 17));
         b.setStateListAnimator(null);
         b.setElevation(0);
         b.setMinHeight(dp(54));
@@ -80,7 +81,7 @@ public final class MainActivity extends Activity {
     private void build() {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
-        scroll.setBackgroundColor(BG);
+        scroll.setBackground(GlassStyle.background(this));
         body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(dp(22), dp(32), dp(22), dp(50));
@@ -89,6 +90,7 @@ public final class MainActivity extends Activity {
         add(body, text("B.", 54, BLUE, true), 0);
         add(body, text("BUMP", 27, INK, true), 0);
         add(body, text("Partilha como se fosse magia.", 15, MUTED, false), 5);
+        add(body, text("LIQUID GLASS  ·  BLUE EDITION", 10, BLUE, true), 13);
         LinearLayout primary = card();
         add(primary, text("Este dispositivo", 18, INK, true), 0);
         add(primary, text(Build.MODEL + "  ·  " + Prefs.localId(this), 12, MUTED, false), 8);
@@ -126,7 +128,7 @@ public final class MainActivity extends Activity {
                 })
                 .setNegativeButton("Cancelar", null).show());
         add(settings, text("Sensibilidade à proximidade", 14, INK, true), 22);
-        TextView rssiHint = text("Padrão: sinal forte (-58 dBm). Ajusta apenas depois de testares.", 12, MUTED, false);
+        TextView rssiHint = text("Padrão: -68 dBm. Se enviar cedo demais, sobe para -63 dBm.", 12, MUTED, false);
         add(settings, rssiHint, 6);
         SeekBar sensitivity = new SeekBar(this);
         sensitivity.setMax(30);
@@ -225,7 +227,7 @@ public final class MainActivity extends Activity {
             String date = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(new Date(timestamp));
             TextView row = text(("received".equals(direction) ? "↓  " : "↑  ") + name + "\n" + date, 14, INK, true);
             row.setPadding(dp(12), dp(13), dp(12), dp(13));
-            row.setBackground(shape(Color.rgb(245, 249, 255), 12));
+            row.setBackground(GlassStyle.secondary(this, 14));
             add(historyPanel, row, 8);
             row.setOnClickListener(v -> openItem(item));
         }

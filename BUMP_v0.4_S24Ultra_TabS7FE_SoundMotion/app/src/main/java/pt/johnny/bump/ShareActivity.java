@@ -33,9 +33,7 @@ public final class ShareActivity extends Activity implements NearbyLink.Listener
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        getWindow().setNavigationBarColor(Color.TRANSPARENT);
-        getWindow().setStatusBarColor(Color.TRANSPARENT);
-        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+        GlassStyle.prepareTranslucentActivity(this);
         buildUi();
         List<Uri> uris = getSharedUris(getIntent());
         if (uris.isEmpty()) { pulse.error("Seleciona um PDF, imagem ou outro ficheiro."); return; }
@@ -47,11 +45,7 @@ public final class ShareActivity extends Activity implements NearbyLink.Listener
                 handler.post(() -> {
                     if (destroyed) return;
                     pulse.start(PulseView.Mode.WAIT);
-                    pulse.setSubtitle("Aproxima do outro dispositivo");
-                    if (!readyChimePlayed) {
-                        readyChimePlayed = true;
-                        BumpSfx.play(this, BumpSfx.Cue.READY);
-                    }
+                    pulse.setSubtitle("À procura do teu tablet…");
                     if (Permissions.granted(this)) begin();
                     else requestPermissions(Permissions.missing(this), 14);
                 });
@@ -94,11 +88,13 @@ public final class ShareActivity extends Activity implements NearbyLink.Listener
     private TextView tappable(String s) {
         TextView t = new TextView(this);
         t.setText(s);
-        t.setTextColor(Color.WHITE);
+        t.setTextColor(GlassStyle.INK);
         t.setTextSize(13);
         t.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         t.setGravity(Gravity.CENTER);
-        t.setPadding(18, 8, 18, 8);
+        t.setPadding(GlassStyle.dp(this,16), GlassStyle.dp(this,10), GlassStyle.dp(this,16), GlassStyle.dp(this,10));
+        t.setBackground(GlassStyle.secondary(this, 22));
+        t.setElevation(GlassStyle.dp(this, 3));
         return t;
     }
     private void buildUi() {
@@ -108,14 +104,14 @@ public final class ShareActivity extends Activity implements NearbyLink.Listener
         pulse.start(PulseView.Mode.PREPARING);
         root.addView(pulse, new FrameLayout.LayoutParams(-1, -1));
         cancel = tappable("Cancelar");
-        FrameLayout.LayoutParams top = new FrameLayout.LayoutParams(-2, 54, Gravity.TOP | Gravity.END);
-        top.setMargins(0, 72, 26, 0);
+        FrameLayout.LayoutParams top = new FrameLayout.LayoutParams(GlassStyle.dp(this, 104), GlassStyle.dp(this, 43), Gravity.TOP | Gravity.END);
+        top.setMargins(0, GlassStyle.dp(this, 61), GlassStyle.dp(this, 22), 0);
         root.addView(cancel, top);
         cancel.setOnClickListener(v -> finish());
         manual = tappable("Enviar sem gesto");
-        manual.setAlpha(.45f);
-        FrameLayout.LayoutParams bottom = new FrameLayout.LayoutParams(-2, 56, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        bottom.bottomMargin = 66;
+        manual.setAlpha(.53f);
+        FrameLayout.LayoutParams bottom = new FrameLayout.LayoutParams(GlassStyle.dp(this, 190), GlassStyle.dp(this, 48), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        bottom.bottomMargin = GlassStyle.dp(this, 42);
         root.addView(manual, bottom);
         manual.setOnClickListener(v -> sendNow());
         setContentView(root);
@@ -142,12 +138,21 @@ public final class ShareActivity extends Activity implements NearbyLink.Listener
                 .setCancelable(false).show();
     }
     @Override public void onReady(String device) {
-        pulse.setSubtitle("Aproxima o telemóvel do " + device);
+        pulse.setSubtitle("Ligado a " + device + " · a preparar gesto…");
         manual.setAlpha(1f);
     }
     @Override public void onBeacon(String token) {
         if (beacon == null || triggered) return;
-        if (!beacon.listen(token, this::sendNow)) pulse.setSubtitle("Proximidade indisponível. Podes enviar manualmente.");
+        if (beacon.listen(token, this::sendNow,
+                () -> pulse.setSubtitle("Não detetei o gesto. Usa Enviar sem gesto."))) {
+            pulse.setSubtitle("Pronto a partilhar · aproxima do tablet");
+            if (!readyChimePlayed) {
+                readyChimePlayed = true;
+                BumpSfx.play(this, BumpSfx.Cue.READY);
+            }
+        } else {
+            pulse.setSubtitle("Proximidade indisponível. Podes enviar manualmente.");
+        }
     }
     @Override public void onIncoming(String name) { }
     @Override public void onIncomingSaved(String name, Uri uri) { }

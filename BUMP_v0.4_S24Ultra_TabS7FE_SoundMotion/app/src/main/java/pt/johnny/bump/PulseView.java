@@ -15,225 +15,321 @@ import android.view.View;
 import android.view.animation.PathInterpolator;
 
 /**
- * Transparent system-like canvas overlay: no screen replacement or opaque background.
- * WAIT: blue aura assembles + document fades in.
- * SEND: document rises and vanishes past top edge.
- * RECEIVE: document enters from the bottom.
- * SENT / RECEIVED: distinct confirmation glows (only after actual transfer/save).
+ * BUMP's new AirDrop / Quick Share-inspired material.
+ * A real, legible frosted sheet on top of the current app; not an almost invisible canvas.
+ * WAIT: the glass appears and the document floats; SEND exits upwards; RECEIVE rises from
+ * below. SENT and RECEIVED are only invoked by the actual completion callbacks.
  */
 final class PulseView extends View {
     enum Mode { PREPARING, WAIT, SEND, RECEIVE, SENT, RECEIVED, ERROR }
-    private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    private static final int INK = Color.rgb(25, 55, 93);
+    private static final int MUTED = Color.rgb(92, 125, 161);
+    private static final int BLUE = Color.rgb(38, 125, 255);
+    private static final PathInterpolator EASE = new PathInterpolator(.20f, .75f, .14f, 1f);
+    private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    private final RectF sheet = new RectF();
     private final boolean sender;
-    private Mode mode = Mode.WAIT;
+    private Mode mode = Mode.PREPARING;
     private String filename = "Documento";
     private String subtitle = "Aproxima do outro dispositivo";
     private String errorText = "Não foi possível concluir";
-    private float phase = 0, travel = 0, appear = 0;
+    private float phase, travel, appear;
     private ValueAnimator idle, action, intro;
-    private static final int BLUE = Color.rgb(38, 125, 255);
-    private static final int WHITE = Color.WHITE;
-    private static final int PALE = Color.rgb(210, 232, 255);
-    private static final PathInterpolator SMOOTH = new PathInterpolator(.22f, .68f, .14f, 1f);
 
-    PulseView(Context c, boolean isSender) {
-        super(c);
+    PulseView(Context context, boolean isSender) {
+        super(context);
         sender = isSender;
-        setLayerType(View.LAYER_TYPE_SOFTWARE, null);
-        idle = ValueAnimator.ofFloat(0, 1);
-        idle.setDuration(3100);
+        // No software rendering layer: use the GPU and avoid expensive bitmap blur loops.
+        setLayerType(View.LAYER_TYPE_HARDWARE, null);
+        idle = ValueAnimator.ofFloat(0f, 1f);
+        idle.setDuration(3400);
         idle.setRepeatCount(ValueAnimator.INFINITE);
         idle.addUpdateListener(a -> { phase = (float) a.getAnimatedValue(); invalidate(); });
         idle.start();
-        intro = ValueAnimator.ofFloat(0, 1);
-        intro.setDuration(710);
-        intro.setInterpolator(SMOOTH);
-        intro.addUpdateListener(a -> { appear = (float) a.getAnimatedValue(); invalidate(); });
-        intro.start();
+        start(Mode.PREPARING);
     }
 
-    void setFilename(String name) { filename = name == null ? "Documento" : name; invalidate(); }
-    void setSubtitle(String value) { subtitle = value == null ? "" : value; invalidate(); }
+    void setFilename(String name) {
+        filename = name == null || name.trim().isEmpty() ? "Documento" : name;
+        invalidate();
+    }
+
+    void setSubtitle(String value) {
+        subtitle = value == null ? "" : value;
+        invalidate();
+    }
+
     void start(Mode next) {
         mode = next;
-        travel = 0;
-        if (next == Mode.WAIT) {
-            if (intro != null) intro.cancel();
-            appear = 0;
-            intro = ValueAnimator.ofFloat(0, 1);
-            intro.setDuration(710);
-            intro.setInterpolator(SMOOTH);
+        travel = 0f;
+        if (intro != null) intro.cancel();
+        if (action != null) action.cancel();
+        if (next == Mode.WAIT || (appear < 1f && next == Mode.PREPARING)) {
+            float from = next == Mode.WAIT ? .25f : 0f;
+            appear = from;
+            intro = ValueAnimator.ofFloat(from, 1f);
+            intro.setDuration(next == Mode.WAIT ? 650 : 560);
+            intro.setInterpolator(EASE);
             intro.addUpdateListener(a -> { appear = (float) a.getAnimatedValue(); invalidate(); });
             intro.start();
-        }
-        if (action != null) action.cancel();
+        } else appear = 1f;
         if (next == Mode.SEND || next == Mode.RECEIVE || next == Mode.SENT || next == Mode.RECEIVED) {
-            action = ValueAnimator.ofFloat(0, 1);
-            action.setDuration(next == Mode.SEND ? 900 : next == Mode.RECEIVE ? 1050 : 760);
-            action.setInterpolator(SMOOTH);
+            action = ValueAnimator.ofFloat(0f, 1f);
+            action.setDuration(next == Mode.SEND ? 890 : next == Mode.RECEIVE ? 980 : 720);
+            action.setInterpolator(EASE);
             action.addUpdateListener(a -> { travel = (float) a.getAnimatedValue(); invalidate(); });
             action.start();
         }
         invalidate();
     }
+
     void sent() { start(Mode.SENT); }
     void received(String name) { setFilename(name); start(Mode.RECEIVED); }
     void error(String value) {
         errorText = value == null ? "Tenta novamente" : value;
         start(Mode.ERROR);
     }
+
     private float dp(float n) { return n * getResources().getDisplayMetrics().density; }
-    private void color(int c) {
-        paint.setColor(c); paint.setShader(null); paint.setStyle(Paint.Style.FILL);
-        paint.clearShadowLayer(); paint.setStrokeWidth(1);
+    private void solid(int color) {
+        p.setShader(null);
+        p.setColor(color);
+        p.setStyle(Paint.Style.FILL);
+        p.setStrokeWidth(dp(1));
+        p.clearShadowLayer();
     }
-    private void text(Canvas c, String value, float x, float y, float size, int shade, boolean bold) {
-        paint.setShader(null); paint.setStyle(Paint.Style.FILL); paint.setColor(shade);
-        if (mode == Mode.WAIT) paint.setAlpha((int)(Color.alpha(shade) * appear));
-        paint.setTextAlign(Paint.Align.CENTER);
-        paint.setTypeface(Typeface.create("sans-serif", bold ? Typeface.BOLD : Typeface.NORMAL));
-        paint.setTextSize(dp(size));
-        String display = value == null ? "" : value;
-        float max = Math.max(dp(80), getWidth() - dp(65));
-        while (paint.measureText(display) > max && display.length() > 5)
-            display = display.substring(0, display.length() - 2) + "…";
-        paint.setShadowLayer(dp(7), 0, dp(2), Color.argb(110, 3, 30, 68));
-        c.drawText(display, x, y, paint);
-        paint.clearShadowLayer();
+    private void gradient(Shader shader) {
+        p.setStyle(Paint.Style.FILL); p.setColor(Color.WHITE); p.setShader(shader);
+        p.clearShadowLayer();
     }
-    private void drawAura(Canvas c, float x, float y) {
-        float breath = (float) Math.sin(phase * 2 * Math.PI);
-        float glow = (mode == Mode.SENT || mode == Mode.RECEIVED) ? (1f + .42f * (1f-travel)) : 1f;
-        float radius = dp((130 + breath * 9) * (.70f + appear * .30f) * glow);
-        paint.setShader(new RadialGradient(x, y, radius,
-                new int[]{Color.argb(78, 26, 128, 255), Color.argb(34, 66, 182, 255), Color.TRANSPARENT},
-                new float[]{0, .42f, 1f}, Shader.TileMode.CLAMP));
-        c.drawCircle(x, y, radius, paint);
-        paint.setShader(null);
-        for (int i = 0; i < 3; i++) {
-            color(Color.argb((int)((44-i*12)*appear), 105, 193, 255));
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(dp(i == 0 ? 1.4f : .9f));
-            c.drawCircle(x, y, dp((68+i*29 + phase*15) * (.82f+appear*.18f)), paint);
-        }
-        paint.setStyle(Paint.Style.FILL);
-        // Slow orbiting points make the aura feel alive while staying lightweight.
-        if (mode == Mode.WAIT) {
-            for (int i = 0; i < 6; i++) {
-                double theta = 2 * Math.PI * (i / 6.0 + phase*.22);
-                float r = dp(88 + (i%3)*15);
-                color(Color.argb((int)(appear*(80 + 40*Math.sin(theta)*Math.sin(theta))), 164, 221, 255));
-                c.drawCircle(x + (float)Math.cos(theta)*r, y + (float)Math.sin(theta)*r, dp(i%2==0?2:1.3f), paint);
-            }
-        }
+    private int alpha(float max, float multiplier) {
+        return Math.min(255, Math.max(0, Math.round(max * Math.max(0f, Math.min(1f, multiplier)))));
     }
-    @Override protected void onDraw(Canvas c) {
-        super.onDraw(c);
-        float w = getWidth(), h = getHeight(), cx = w/2, cy = h*.46f;
-        // Only a faint tint; the app behind remains visible.
-        color(Color.argb(9, 6, 18, 47)); c.drawRect(0, 0, w, h, paint);
-        drawAura(c, cx, cy);
-        float docY = cy + dp(2), docOpacity = appear;
+
+    @Override protected void onDraw(Canvas canvas) {
+        super.onDraw(canvas);
+        float width = getWidth(), height = getHeight();
+        if (width <= 0 || height <= 0) return;
+        float cx = width / 2f;
+        float glassW = Math.min(width - dp(34), dp(382));
+        float glassH = Math.min(height - dp(108), dp(350));
+        float top = (height - glassH) * .47f;
+        sheet.set(cx - glassW/2f, top, cx + glassW/2f, top + glassH);
+        float docX = cx;
+        float docBaseY = sheet.top + Math.min(dp(133), glassH * .40f);
+        float titleY = sheet.top + Math.min(dp(239), glassH * .69f);
+
+        // Backdrop is deliberately translucent but not clear/invisible. App content survives.
+        solid(Color.argb(52, 14, 29, 57));
+        canvas.drawRect(0, 0, width, height, p);
+        gradient(new LinearGradient(0, 0, width, height,
+                Color.argb(24, 48, 97, 178), Color.argb(13, 20, 51, 101), Shader.TileMode.CLAMP));
+        canvas.drawRect(0, 0, width, height, p);
+        p.setShader(null);
+
+        drawGlass(canvas, appear);
+
+        // The aura is inside the glass, while file movement can cross the screen boundary.
+        canvas.save();
+        Path clip = new Path();
+        clip.addRoundRect(sheet, dp(34), dp(34), Path.Direction.CW);
+        canvas.clipPath(clip);
+        drawAura(canvas, docX, docBaseY);
+        canvas.restore();
+
+        float docY = docBaseY + (float)Math.sin(phase * Math.PI * 2) * dp(2.7f);
+        float opacity = appear;
+        float scale = 1f;
         if (mode == Mode.SEND) {
-            docY = cy - travel*(h*.59f + dp(85));
-            docOpacity *= Math.max(0, 1 - Math.max(0, travel-.65f)/.35f);
-            drawTrail(c, cx, docY + dp(45), travel, false);
+            docY = docBaseY - travel * (docBaseY + dp(105));
+            scale = 1f - travel * .25f;
+            opacity = 1f - Math.max(0f, (travel - .62f)/.38f);
+            drawTail(canvas, cx, docY + dp(41), travel, false);
         } else if (mode == Mode.RECEIVE) {
-            docY = h + dp(70) - travel*(h - cy + dp(70));
-            drawTrail(c, cx, docY + dp(45), travel, true);
+            docY = height + dp(70) - travel * (height + dp(70) - docBaseY);
+            scale = .86f + travel * .14f;
+            opacity = Math.min(1f, travel * 2f);
+            drawTail(canvas, cx, docY + dp(41), travel, true);
         } else if (mode == Mode.SENT || mode == Mode.ERROR || mode == Mode.PREPARING) {
-            docOpacity = 0;
+            opacity = 0f;
         } else if (mode == Mode.WAIT) {
-            docY += dp((1-appear)*19) + dp((float)Math.sin(phase*2*Math.PI)*3);
+            docY += dp((1f - appear) * 18f);
+            scale = .87f + appear * .13f;
         }
-        drawDocument(c, cx, docY, docOpacity);
-        if (mode == Mode.SENT || mode == Mode.RECEIVED) drawSuccess(c, cx, cy, travel, mode == Mode.RECEIVED);
-        float y = cy + dp(104);
-        if (mode == Mode.PREPARING) {
-            text(c, "A preparar…", cx, y, 15, WHITE, true);
-            text(c, filename, cx, y+dp(26), 12, PALE, false);
-        } else if (mode == Mode.WAIT) {
-            text(c, "Pronto a partilhar", cx, y, 16, WHITE, true);
-            text(c, filename, cx, y+dp(26), 12, PALE, false);
-            text(c, subtitle, cx, y+dp(54), 11, Color.rgb(163, 206, 255), false);
-        } else if (mode == Mode.SEND) {
-            text(c, "A enviar", cx, y, 16, WHITE, true);
-            text(c, filename, cx, y+dp(27), 12, PALE, false);
-        } else if (mode == Mode.RECEIVE) {
-            text(c, "A receber", cx, y, 16, WHITE, true);
-            text(c, subtitle, cx, y+dp(26), 12, PALE, false);
-        } else if (mode == Mode.SENT) {
-            text(c, "Enviado", cx, y, 16, WHITE, true);
-            text(c, filename, cx, y+dp(27), 12, PALE, false);
-        } else if (mode == Mode.RECEIVED) {
-            text(c, "Recebido", cx, y, 16, WHITE, true);
-            text(c, filename, cx, y+dp(26), 12, PALE, false);
-            text(c, "Guardado em Downloads/BUMP", cx, y+dp(54), 11, Color.rgb(163,206,255), false);
-        } else {
-            text(c, sender ? "Não foi possível enviar" : "Não foi possível receber", cx, y, 16, WHITE, true);
-            text(c, errorText, cx, y+dp(29), 12, PALE, false);
+        drawDocument(canvas, docX, docY, opacity, scale);
+        if (mode == Mode.SENT || mode == Mode.RECEIVED) {
+            drawSuccess(canvas, docX, docBaseY, travel, mode == Mode.RECEIVED);
         }
+        drawTitles(canvas, cx, titleY);
     }
-    private void drawTrail(Canvas c, float x, float y, float fraction, boolean enter) {
-        if (fraction <= .02f) return;
-        float opacity = enter ? Math.max(0, 1-fraction*.75f) : Math.max(0, fraction*.7f);
-        paint.setShader(new LinearGradient(x, y, x, y+dp(140),
-                new int[]{Color.argb((int)(155*opacity), 73, 197, 255), Color.argb((int)(45*opacity), 38, 125, 255), Color.TRANSPARENT},
+
+    private void drawGlass(Canvas c, float progress) {
+        float radius = dp(34);
+        float alpha = .65f + .35f * progress;
+        // Soft contact shadow, without an extra bitmap or continuous blur convolution.
+        solid(Color.argb(this.alpha(47, alpha), 17, 56, 124));
+        p.setShadowLayer(dp(31), 0, dp(14), Color.argb(this.alpha(57, alpha), 23, 45, 93));
+        c.drawRoundRect(sheet, radius, radius, p);
+        p.clearShadowLayer();
+        gradient(new LinearGradient(sheet.left, sheet.top, sheet.right, sheet.bottom,
+                new int[]{Color.argb(this.alpha(244, alpha), 252, 254, 255),
+                        Color.argb(this.alpha(229, alpha), 221, 237, 255),
+                        Color.argb(this.alpha(242, alpha), 244, 250, 255)},
+                new float[]{0f, .55f, 1f}, Shader.TileMode.CLAMP));
+        c.drawRoundRect(sheet, radius, radius, p);
+        p.setShader(null);
+        // Inner highlight + double edge give a lens-like refraction impression.
+        solid(Color.argb(this.alpha(215, alpha), 255, 255, 255));
+        p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(dp(1.25f));
+        c.drawRoundRect(sheet.left + dp(.7f), sheet.top + dp(.7f), sheet.right - dp(.7f),
+                sheet.bottom - dp(.7f), radius, radius, p);
+        solid(Color.argb(this.alpha(45, alpha), 63, 128, 214));
+        p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(dp(.6f));
+        c.drawRoundRect(sheet.left + dp(2.4f), sheet.top + dp(2.4f), sheet.right - dp(2.4f),
+                sheet.bottom - dp(2.4f), radius - dp(2), radius - dp(2), p);
+        p.setStyle(Paint.Style.FILL);
+        c.save();
+        Path clip = new Path(); clip.addRoundRect(sheet, radius, radius, Path.Direction.CW);
+        c.clipPath(clip);
+        // Pale blue volume, top lip, and a subtle moving specular reflection.
+        gradient(new RadialGradient(sheet.centerX()-dp(60), sheet.top+dp(25), dp(220),
+                new int[]{Color.argb(this.alpha(66, alpha), 255, 255, 255),
+                        Color.argb(this.alpha(21, alpha), 124, 193, 255), Color.TRANSPARENT},
                 null, Shader.TileMode.CLAMP));
-        c.drawRoundRect(new RectF(x-dp(2), y, x+dp(2), y+dp(140)), dp(2), dp(2), paint);
-        paint.setShader(null);
+        c.drawRect(sheet, p);
+        float reflectiveX = sheet.left + sheet.width() * (.20f + phase * .36f);
+        gradient(new LinearGradient(reflectiveX-dp(55), sheet.top, reflectiveX+dp(95), sheet.bottom,
+                new int[]{Color.TRANSPARENT, Color.argb(this.alpha(30, alpha), 255, 255, 255), Color.TRANSPARENT},
+                null, Shader.TileMode.CLAMP));
+        c.drawRect(sheet, p);
+        p.setShader(null);
+        c.restore();
+        drawBrand(c, alpha);
     }
-    private void drawSuccess(Canvas c, float x, float y, float progress, boolean receiving) {
-        float ringR = dp(53 + progress*112);
-        color(Color.argb((int)(115*(1-progress)), receiving ? 132 : 80, 215, 255));
-        paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(dp(2.5f*(1-progress)+.4f));
-        c.drawCircle(x, y, ringR, paint); paint.setStyle(Paint.Style.FILL);
-        // When receiving, retain the file and draw a compact check over it.
-        if (!receiving) {
-            color(Color.argb((int)(230*Math.min(1,progress*3)), 232, 247, 255));
-            c.drawCircle(x, y, dp(37 + (1-progress)*4), paint);
-        }
-        paint.setColor(BLUE); paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeCap(Paint.Cap.ROUND); paint.setStrokeJoin(Paint.Join.ROUND);
-        paint.setStrokeWidth(dp(receiving ? 3.8f : 5f));
-        float s = receiving ? .57f : 1f;
-        Path check = new Path();
-        check.moveTo(x-dp(16*s), y+dp(1*s));
-        check.lineTo(x-dp(4*s), y+dp(13*s));
-        check.lineTo(x+dp(18*s), y-dp(13*s));
-        c.drawPath(check, paint); paint.setStyle(Paint.Style.FILL);
-        for (int i = 0; i < 7; i++) {
-            double angle = i*Math.PI*2/7 + .3;
-            float r = dp(75 + progress*35);
-            color(Color.argb((int)(130*(1-progress)), 148, 223, 255));
-            c.drawCircle(x+(float)Math.cos(angle)*r, y+(float)Math.sin(angle)*r, dp(2.2f*(1-progress)+.6f), paint);
+
+    private void drawBrand(Canvas c, float a) {
+        float y = sheet.top + dp(37);
+        solid(Color.argb(alpha(225, a), 44, 132, 252));
+        c.drawCircle(sheet.centerX()-dp(31), y-dp(4), dp(4), p);
+        drawText(c, "BUMP", sheet.centerX()+dp(7), y, 12, Color.argb(alpha(255, a), 51, 106, 177), true,
+                sheet.width() - dp(36));
+        solid(Color.argb(alpha(50, a), 95, 160, 230));
+        c.drawRoundRect(sheet.left + dp(31), sheet.bottom - dp(43), sheet.right - dp(31),
+                sheet.bottom - dp(42), dp(.5f), dp(.5f), p);
+        // Three small transfer marks at the bottom of the material.
+        for (int i=0; i<3; i++) {
+            solid(Color.argb(alpha(i==1?195:84, a), 76, 145, 240));
+            c.drawCircle(sheet.centerX() + dp((i-1)*12), sheet.bottom - dp(23), dp(i==1?2.4f:1.8f), p);
         }
     }
-    private void drawDocument(Canvas c, float x, float y, float alpha) {
-        if (alpha <= .01f) return;
-        c.save(); c.translate(x,y);
-        float width=dp(72), height=dp(90);
-        color(Color.argb((int)(alpha*37),80,180,255));
-        c.drawRoundRect(new RectF(-width/2-dp(8),-height/2-dp(8),width/2+dp(8),height/2+dp(8)),dp(18),dp(18),paint);
-        color(Color.argb((int)(alpha*245),245,250,255));
-        paint.setShadowLayer(dp(20),0,dp(4),Color.argb((int)(alpha*125),26,91,246));
-        c.drawRoundRect(new RectF(-width/2,-height/2,width/2,height/2),dp(13),dp(13),paint);
-        paint.clearShadowLayer();
-        color(Color.argb((int)(alpha*255),174,210,255));
-        Path fold=new Path();
-        fold.moveTo(width/2-dp(24),-height/2);
-        fold.lineTo(width/2-dp(24),-height/2+dp(24));
-        fold.lineTo(width/2,-height/2+dp(24));
-        fold.close(); c.drawPath(fold,paint);
-        color(Color.argb((int)(alpha*220),70,146,245));
-        for (int i=0;i<3;i++)
-            c.drawRoundRect(new RectF(-dp(22),-dp(5)+i*dp(14),dp(19-i*3),-dp(2)+i*dp(14)),dp(2),dp(2),paint);
+
+    private void drawAura(Canvas c, float x, float y) {
+        float pulse = (float)Math.sin(phase * Math.PI*2);
+        float success = (mode == Mode.SENT || mode == Mode.RECEIVED) ? 1f+.17f*(1f-travel) : 1f;
+        float r = dp((100 + pulse * 7) * success);
+        gradient(new RadialGradient(x, y, r,
+                new int[]{Color.argb(alpha(80, appear), 77, 169, 255),
+                        Color.argb(alpha(42, appear), 125, 202, 255), Color.TRANSPARENT},
+                new float[]{0f, .43f, 1f}, Shader.TileMode.CLAMP));
+        c.drawCircle(x, y, r, p);
+        p.setShader(null);
+        for (int i = 0; i < 2; i++) {
+            solid(Color.argb(alpha(61 - i*19, appear), 63, 160, 248));
+            p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(dp(i==0?1.2f:.75f));
+            c.drawCircle(x, y, dp(64 + i*28 + phase*9), p);
+        }
+        p.setStyle(Paint.Style.FILL);
+    }
+
+    private void drawDocument(Canvas c, float x, float y, float opacity, float scale) {
+        if (opacity < .012f) return;
+        c.save(); c.translate(x, y); c.scale(scale, scale);
+        float w = dp(76), h = dp(94);
+        solid(Color.argb(alpha(38, opacity), 35, 125, 255));
+        c.drawRoundRect(-w/2-dp(8),-h/2-dp(8),w/2+dp(8),h/2+dp(8),dp(20),dp(20),p);
+        gradient(new LinearGradient(0,-h/2,0,h/2,
+                Color.argb(alpha(255, opacity),255,255,255),
+                Color.argb(alpha(255, opacity),233,245,255),Shader.TileMode.CLAMP));
+        p.setShadowLayer(dp(17),0,dp(5),Color.argb(alpha(79, opacity),36,102,217));
+        c.drawRoundRect(-w/2,-h/2,w/2,h/2,dp(12),dp(12),p);
+        p.clearShadowLayer();p.setShader(null);
+        solid(Color.argb(alpha(255,opacity),143,198,255));
+        Path fold = new Path();
+        fold.moveTo(w/2-dp(23),-h/2);
+        fold.lineTo(w/2-dp(23),-h/2+dp(23));
+        fold.lineTo(w/2,-h/2+dp(23));
+        fold.close(); c.drawPath(fold,p);
+        solid(Color.argb(alpha(235,opacity),49,132,245));
+        for (int i=0;i<3;i++) {
+            c.drawRoundRect(-dp(23),-dp(4)+i*dp(14),dp(22-i*3),-dp(1)+i*dp(14),dp(2),dp(2),p);
+        }
         c.restore();
     }
+
+    private void drawTail(Canvas c, float x, float y, float fraction, boolean entering) {
+        if (fraction < .03f) return;
+        float a = entering ? Math.max(0f, 1f - fraction*.7f) : fraction;
+        gradient(new LinearGradient(x, y, x, y+dp(100),
+                new int[]{Color.argb(alpha(167,a),62,164,255),Color.argb(alpha(60,a),112,204,255),Color.TRANSPARENT},
+                null,Shader.TileMode.CLAMP));
+        c.drawRoundRect(x-dp(2),y,x+dp(2),y+dp(100),dp(2),dp(2),p);
+        p.setShader(null);
+    }
+
+    private void drawSuccess(Canvas c,float x,float y,float fraction,boolean receiving) {
+        if (!receiving) {
+            solid(Color.argb(alpha(245, Math.min(1f, fraction*4f)),246,251,255));
+            c.drawCircle(x,y,dp(36),p);
+        }
+        solid(Color.argb(alpha(145,1f-fraction),64,146,253));
+        p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(dp(2.6f));
+        c.drawCircle(x,y,dp(48+fraction*75),p);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(Color.rgb(37,119,250));
+        p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(dp(receiving?4f:4.8f));
+        p.setStrokeCap(Paint.Cap.ROUND);p.setStrokeJoin(Paint.Join.ROUND);
+        Path mark = new Path();
+        mark.moveTo(x-dp(15),y+dp(1));mark.lineTo(x-dp(4),y+dp(12));mark.lineTo(x+dp(18),y-dp(13));
+        c.drawPath(mark,p);p.setStyle(Paint.Style.FILL);
+    }
+
+    private void drawTitles(Canvas c, float cx, float base) {
+        String title, lineTwo, lineThree = "";
+        switch (mode) {
+            case PREPARING: title="A preparar…";lineTwo=filename;break;
+            case WAIT: title="Pronto a partilhar";lineTwo=filename;lineThree=subtitle;break;
+            case SEND: title="A enviar";lineTwo=filename;break;
+            case RECEIVE: title="A receber";lineTwo=subtitle;break;
+            case SENT: title="Enviado";lineTwo=filename;break;
+            case RECEIVED: title="Recebido";lineTwo=filename;lineThree="Guardado em Downloads/BUMP";break;
+            default: title=sender?"Não foi possível enviar":"Não foi possível receber";lineTwo=errorText;
+        }
+        float max = sheet.width() - dp(51);
+        drawText(c,title,cx,base,17,INK,true,max);
+        drawText(c,lineTwo,cx,base+dp(28),13,MUTED,false,max);
+        if (!lineThree.isEmpty()) drawText(c,lineThree,cx,base+dp(52),11,Color.rgb(69,131,201),false,max);
+    }
+
+    private void drawText(Canvas c,String content,float x,float y,float size,int color,boolean bold,float max) {
+        solid(color);
+        p.setTypeface(Typeface.create("sans-serif",bold?Typeface.BOLD:Typeface.NORMAL));
+        p.setTextAlign(Paint.Align.CENTER);p.setTextSize(dp(size));
+        String value = content == null ? "" : content;
+        if (p.measureText(value)>max) {
+            String original=value;int limit=original.length();
+            while (limit>1 && p.measureText(original.substring(0,limit)+"…")>max) limit--;
+            value=original.substring(0,limit)+"…";
+        }
+        p.setAlpha(alpha(255,appear));
+        c.drawText(value,x,y,p);
+        p.setAlpha(255);
+    }
+
     @Override protected void onDetachedFromWindow() {
-        if (intro != null) intro.cancel();
-        if (idle != null) idle.cancel();
-        if (action != null) action.cancel();
+        if (idle!=null) idle.cancel();
+        if (intro!=null) intro.cancel();
+        if (action!=null) action.cancel();
         super.onDetachedFromWindow();
     }
 }

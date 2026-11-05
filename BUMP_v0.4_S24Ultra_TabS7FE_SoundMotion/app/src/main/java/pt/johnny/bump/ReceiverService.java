@@ -35,6 +35,7 @@ public final class ReceiverService extends Service implements NearbyLink.Listene
     private PulseView overlay;
     private BroadcastReceiver radioReceiver;
     private Runnable overlayRemoval;
+    private Runnable endActiveAdvertising;
     private boolean running;
     private static final int NOTIFICATION_ID = 47;
     @Override public IBinder onBind(Intent intent) { return null; }
@@ -72,6 +73,8 @@ public final class ReceiverService extends Service implements NearbyLink.Listene
         else startForeground(NOTIFICATION_ID, note);
     }
     private void startRadio() {
+        if (endActiveAdvertising != null) handler.removeCallbacks(endActiveAdvertising);
+        endActiveAdvertising = null;
         if (link != null) link.close();
         if (beacon != null) beacon.stopAdvertising();
         beacon = new Beacon(this);
@@ -108,7 +111,20 @@ public final class ReceiverService extends Service implements NearbyLink.Listene
             link.approvePairing(endpointId, false); // Never accept an unfamiliar device invisibly.
         }
     }
-    @Override public void onReady(String peerName) { MainActivity.updateStatus("Emparelhado com " + peerName); }
+    @Override public void onReady(String peerName) {
+        MainActivity.updateStatus("Emparelhado com " + peerName);
+        // Once authenticated, increase the beacon frequency for a short window only.
+        if (beacon != null && beaconToken != null) {
+            beacon.advertise(beaconToken, true);
+            if (endActiveAdvertising != null) handler.removeCallbacks(endActiveAdvertising);
+            endActiveAdvertising = () -> {
+                endActiveAdvertising = null;
+                if (running && beacon != null && beaconToken != null)
+                    beacon.advertise(beaconToken, false);
+            };
+            handler.postDelayed(endActiveAdvertising, 65000);
+        }
+    }
     @Override public void onBeacon(String token) { }
     @Override public void onIncoming(String name) {
         MainActivity.updateStatus("A receber ficheiro");
@@ -169,6 +185,13 @@ public final class ReceiverService extends Service implements NearbyLink.Listene
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(-1, -1,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, flags, PixelFormat.TRANSLUCENT);
         params.gravity = Gravity.TOP | Gravity.START;
+        // A translucent full-screen overlay must not block touches on Android 12+.
+        params.alpha = .78f;
+        // True system blur is optional; PulseView still has a self-contained glass surface.
+        if (android.os.Build.VERSION.SDK_INT >= 31 && GlassStyle.canBlur(this)) {
+            params.flags |= WindowManager.LayoutParams.FLAG_BLUR_BEHIND;
+            params.setBlurBehindRadius(GlassStyle.dp(this, 15));
+        }
         try {
             windowManager.addView(overlay, params);
             overlay.start(complete ? PulseView.Mode.RECEIVED : PulseView.Mode.RECEIVE);
@@ -186,6 +209,7 @@ public final class ReceiverService extends Service implements NearbyLink.Listene
     }
     @Override public void onDestroy() {
         running = false;
+        if (endActiveAdvertising != null) handler.removeCallbacks(endActiveAdvertising);
         if (radioReceiver != null) { try { unregisterReceiver(radioReceiver); } catch (Exception ignored) { } }
         removeOverlay();
         if (link != null) link.close();

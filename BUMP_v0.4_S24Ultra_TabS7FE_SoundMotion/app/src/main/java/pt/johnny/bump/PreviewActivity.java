@@ -17,6 +17,7 @@ public final class PreviewActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        GlassStyle.prepareTranslucentActivity(this);
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.TRANSPARENT);
         pulse = new PulseView(this, true);
@@ -28,15 +29,15 @@ public final class PreviewActivity extends Activity {
         FrameLayout.LayoutParams closeParams = new FrameLayout.LayoutParams(dp(85), dp(46), Gravity.TOP | Gravity.END);
         closeParams.setMargins(0, dp(65), dp(24), 0);
         root.addView(close, closeParams);
+        close.setBackground(GlassStyle.secondary(this, 22));
+        close.setElevation(dp(3));
         close.setOnClickListener(v -> finish());
 
         LinearLayout controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.VERTICAL);
         controls.setPadding(dp(11), dp(13), dp(11), dp(11));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.argb(222, 17, 35, 64));
-        bg.setCornerRadius(dp(22));
-        controls.setBackground(bg);
+        controls.setBackground(GlassStyle.panel(this, 26));
+        controls.setElevation(dp(9));
 
         TextView label = label("PRÉ-VISUALIZAÇÃO · SEM TRANSFERÊNCIA");
         label.setTextSize(10);
@@ -60,7 +61,7 @@ public final class PreviewActivity extends Activity {
     private int dp(float v) { return (int)(v * getResources().getDisplayMetrics().density + .5f); }
     private TextView label(String content) {
         TextView t = new TextView(this);
-        t.setText(content); t.setTextSize(13); t.setTextColor(Color.WHITE);
+        t.setText(content); t.setTextSize(13); t.setTextColor(GlassStyle.INK);
         t.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         t.setGravity(Gravity.CENTER);
         return t;
@@ -70,9 +71,7 @@ public final class PreviewActivity extends Activity {
         button.setTextSize(12);
         button.setPadding(dp(4),dp(9),dp(4),dp(9));
         GradientDrawable shape = new GradientDrawable();
-        shape.setColor(Color.argb(90, 81, 149, 255));
-        shape.setCornerRadius(dp(14));
-        button.setBackground(shape);
+        button.setBackground(GlassStyle.secondary(this, 15));
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(43), 1);
         params.setMargins(dp(3), dp(3), dp(3), dp(3));
         line.addView(button, params);
