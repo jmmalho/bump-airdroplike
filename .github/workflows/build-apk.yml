@@ -22,15 +22,13 @@ jobs:
           java-version: '17'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Accept Android SDK licenses
-        shell: bash
-        run: sdkmanager --licenses < <(yes) > /dev/null
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
 
       - name: Install Android SDK components
         shell: bash
-        run: sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0' < <(yes)
+        run: sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
