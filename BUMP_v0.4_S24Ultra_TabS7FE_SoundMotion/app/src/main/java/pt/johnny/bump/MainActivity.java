@@ -225,7 +225,8 @@ public final class MainActivity extends Activity {
             String name = item.optString("name", "ficheiro"), direction = item.optString("direction", "sent");
             long timestamp = item.optLong("time", 0);
             String date = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(new Date(timestamp));
-            TextView row = text(("received".equals(direction) ? "↓  " : "↑  ") + name + "\n" + date, 14, INK, true);
+            String action = OpenFileActivity.buttonLabel(name, item.optString("mime", ""));
+            TextView row = text(("received".equals(direction) ? "↓  " : "↑  ") + name + "\n" + date + "  ·  " + action + " ›", 14, INK, true);
             row.setPadding(dp(12), dp(13), dp(12), dp(13));
             row.setBackground(GlassStyle.secondary(this, 14));
             add(historyPanel, row, 8);
@@ -235,13 +236,12 @@ public final class MainActivity extends Activity {
     private void openItem(JSONObject item) {
         try {
             Uri uri = Uri.parse(item.getString("uri"));
-            Intent open = new Intent(Intent.ACTION_VIEW);
-            open.setDataAndType(uri, item.optString("mime", "application/octet-stream"));
-            open.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            startActivity(Intent.createChooser(open, "Abrir ficheiro"));
+            startActivity(OpenFileActivity.intent(this, uri,
+                    item.optString("name", "ficheiro"),
+                    item.optString("mime", "application/octet-stream")));
         } catch (Exception e) {
-            new AlertDialog.Builder(this).setTitle("Não consegui abrir")
-                    .setMessage("O ficheiro pode ter sido movido ou a aplicação de leitura já não está disponível.")
+            new AlertDialog.Builder(this).setTitle("Ficheiro indisponível")
+                    .setMessage("Não foi possível encontrar o ficheiro no histórico.")
                     .setPositiveButton("OK", null).show();
         }
     }

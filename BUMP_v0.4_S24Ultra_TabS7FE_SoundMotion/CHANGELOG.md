@@ -1,16 +1,16 @@
-# BUMP — Changelog
+# BUMP v0.5.1 — Smart Open + Elastic Wave
 
-## 0.5.0-wave-beta
+- Receção: ação contextual para abrir o documento diretamente após a animação, sem entrar na app.
+- PDF → leitor de PDFs; imagens → galeria/visualizador; vídeo e áudio → apps compatíveis.
+- APK → pedido de confirmação e instalador do Android, nunca execução automática.
+- Histórico: mesmo mecanismo de abertura segura, para ficheiros enviados ou recebidos.
+- MIME: fallback pelo nome/extensão quando Nearby informa application/octet-stream.
+- Android 13+: efeito de refração AGSL aplicado exclusivamente aos píxeis do BUMP durante a onda de envio/receção.
+- Versões anteriores: animação Canvas mantida como fallback.
+- Sem novas bibliotecas de terceiros; mantém BLE, Nearby, Liquid Glass e sons.
 
-- Novo motor Canvas de ondas e luz direcionais, sem dependências adicionais.
-- «Pronto»: anéis de respiração no painel de vidro.
-- «Enviar»: antecipação, onda expansiva, documento lançado pelo topo.
-- «Receber»: onda azul nasce na borda inferior, documento ascende e assenta.
-- «Enviado» e «Recebido»: anéis concêntricos e visto desenhado progressivamente.
-- Coordenação da confirmação: ficheiros muito pequenos não cortam a animação.
-- Novo botão «Ver sequência AirDrop Wave» na pré-visualização.
-- Respeita a configuração global de animações do Android e não anima em repouso de fundo.
-- Mantidas todas as funções da v0.4.3 e melhorias BLE da v0.4.2.
-
-**Limite atual:** movimento entre ecrãs é coreografado, não sincronizado por posição real.
-A compilação Android não foi executada neste ambiente.
+## Segurança e limites
+- Não abre automaticamente ficheiros quando a app está no background.
+- Android exige autorização do utilizador para instalar APKs de origem desconhecida.
+- Em dispositivos sem visualizador compatível, a app informa o utilizador.
+- A deformação ótica não altera o ecrã de outras aplicações.

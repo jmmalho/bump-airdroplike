@@ -15,6 +15,8 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Only used after tapping Instalar APK; Android remains in control. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:label="BUMP"
@@ -42,6 +44,7 @@
             </intent-filter>
         </activity>
         <activity android:name=".PreviewActivity" android:exported="false" android:theme="@style/BumpShareTheme" />
+        <activity android:name=".OpenFileActivity" android:exported="false" android:theme="@style/BumpShareTheme" />
         <service android:name=".ReceiverService"
             android:foregroundServiceType="connectedDevice"
             android:exported="false" />

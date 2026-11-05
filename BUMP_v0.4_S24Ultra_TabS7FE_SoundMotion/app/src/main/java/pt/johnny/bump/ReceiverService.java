@@ -23,6 +23,14 @@ import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.widget.TextView;
+import android.widget.Toast;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.widget.TextView;
+import android.widget.Toast;
 
 /** User-enabled, visible Android connectedDevice foreground service. */
 public final class ReceiverService extends Service implements NearbyLink.Listener {
@@ -34,6 +42,7 @@ public final class ReceiverService extends Service implements NearbyLink.Listene
     private String beaconToken;
     private WindowManager windowManager;
     private PulseView overlay;
+    private TextView receivedAction;
     private BroadcastReceiver radioReceiver;
     private Runnable overlayRemoval;
     private Runnable endActiveAdvertising;
@@ -155,6 +164,12 @@ public final class ReceiverService extends Service implements NearbyLink.Listene
                 if (overlay != null) overlay.setFilename(name);
             }
             BumpSfx.play(this, BumpSfx.Cue.RECEIVED);
+            if (overlay != null) {
+                showOpenAction(name, uri);
+                if (overlayRemoval != null) handler.removeCallbacks(overlayRemoval);
+                overlayRemoval = this::removeOverlay;
+                handler.postDelayed(overlayRemoval, 5800);
+            }
         };
         handler.postDelayed(pendingArrival, overlay != null ? Math.max(0, 960 - elapsed) : 0);
         MainActivity.refreshHistory();
@@ -179,6 +194,44 @@ public final class ReceiverService extends Service implements NearbyLink.Listene
             overlayRemoval = this::removeOverlay;
             handler.postDelayed(overlayRemoval, 2300);
         }
+    }
+
+    /** A small, independently touchable CTA above the non-touchable wave overlay. */
+    private void showOpenAction(String name, Uri file) {
+        if (overlay == null || windowManager == null || !Settings.canDrawOverlays(this)) return;
+        if (receivedAction != null) {
+            try { windowManager.removeView(receivedAction); } catch (Exception ignored) { }
+            receivedAction = null;
+        }
+        final String mime = HistoryStore.mime(this, file, name);
+        TextView button = new TextView(this);
+        button.setText(OpenFileActivity.buttonLabel(name, mime) + "  ›");
+        button.setTextSize(15f);
+        button.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        button.setTextColor(Color.WHITE);
+        button.setGravity(Gravity.CENTER);
+        button.setPadding(GlassStyle.dp(this, 22), GlassStyle.dp(this, 9), GlassStyle.dp(this, 22), GlassStyle.dp(this, 9));
+        button.setBackground(GlassStyle.action(this, 23));
+        button.setElevation(GlassStyle.dp(this, 7));
+        WindowManager.LayoutParams p = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT, GlassStyle.dp(this, 50),
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                PixelFormat.TRANSLUCENT);
+        p.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        p.y = GlassStyle.dp(this, 64);
+        button.setOnClickListener(v -> {
+            removeOverlay();
+            try {
+                Intent open = OpenFileActivity.intent(this, file, name, mime)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(open);
+            } catch (Exception ex) {
+                Toast.makeText(this, "Abre o ficheiro através do histórico BUMP", Toast.LENGTH_LONG).show();
+            }
+        });
+        try { windowManager.addView(button, p); receivedAction = button; }
+        catch (Exception ignored) { /* History remains the reliable fallback. */ }
     }
 
     private void showOverlay(String title, boolean complete) {
@@ -213,6 +266,10 @@ public final class ReceiverService extends Service implements NearbyLink.Listene
         } catch (Exception e) { overlay = null; }
     }
     private void removeOverlay() {
+        if (receivedAction != null && windowManager != null) {
+            try { windowManager.removeView(receivedAction); } catch (Exception ignored) { }
+            receivedAction = null;
+        }
         if (overlayRemoval != null) handler.removeCallbacks(overlayRemoval);
         overlayRemoval = null;
         if (overlay != null && windowManager != null) {

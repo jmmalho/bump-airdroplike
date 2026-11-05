@@ -39,6 +39,7 @@ final class PulseView extends View {
     private String errorText = "Não foi possível concluir";
     private float breathe, progress = 1f, reveal = 0f;
     private ValueAnimator idle, action, intro;
+    private final LiquidRefraction liquid = new LiquidRefraction();
 
     PulseView(Context context, boolean isSender) {
         super(context);
@@ -57,6 +58,7 @@ final class PulseView extends View {
         if (intro != null) intro.cancel();
         if (action != null) action.cancel();
         mode = next;
+        liquid.disable(this);
         progress = (next == Mode.WAIT || next == Mode.PREPARING) ? 1f : 0f;
         if (!ValueAnimator.areAnimatorsEnabled()) { reveal = 1f; progress = 1f; invalidate(); return; }
 
@@ -73,7 +75,12 @@ final class PulseView extends View {
             action.setDuration(next == Mode.SEND ? 1140 : next == Mode.RECEIVE ? 1200 : 760);
             // Linear timeline with different physically-motivated easing for each element.
             action.setInterpolator(input -> input);
-            action.addUpdateListener(a -> { progress = (float) a.getAnimatedValue(); invalidate(); });
+            action.addUpdateListener(a -> {
+                progress = (float) a.getAnimatedValue();
+                if (mode == Mode.SEND || mode == Mode.RECEIVE)
+                    liquid.update(this, progress, mode == Mode.RECEIVE);
+                invalidate();
+            });
             action.start();
         }
         invalidate();
@@ -94,6 +101,7 @@ final class PulseView extends View {
         }
     }
     @Override protected void onDetachedFromWindow() {
+        liquid.disable(this);
         if (idle != null) { idle.cancel(); idle = null; }
         if (action != null) { action.cancel(); action = null; }
         if (intro != null) { intro.cancel(); intro = null; }

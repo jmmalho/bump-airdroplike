@@ -1,25 +1,14 @@
-# Atualizar o repositório GitHub existente para BUMP v0.5
+# Instalar o BUMP v0.5.1 no GitHub
 
-Este ZIP patch conserva a mesma estrutura do projeto que já tens no GitHub.
+Parte da v0.5 Wave Handoff. Mantém o workflow do GitHub Actions atual.
 
-1. Abre no GitHub a pasta `BUMP_v0.4_S24Ultra_TabS7FE_SoundMotion/`.
-2. Substitui **exatamente** os caminhos seguintes pelos incluídos no ZIP:
+1. Abre a pasta do projeto Android, normalmente `BUMP_v0.4_S24Ultra_TabS7FE_SoundMotion`.
+2. Copia/substitui os ficheiros da pasta do patch para os mesmos caminhos no repositório.
+3. Ficheiros NOVOS: `app/src/main/java/pt/johnny/bump/OpenFileActivity.java`, `LiquidRefraction.java`.
+4. Ficheiros MODIFICADOS: `app/src/main/AndroidManifest.xml`, `app/build.gradle`, `MainActivity.java`, `ReceiverService.java`, `PulseView.java`.
+5. Faz commit. GitHub Actions deverá executar `Build BUMP APK`.
+6. Instala a APK atualizada em AMBOS os aparelhos. Se for assinada com a mesma chave da APK atual, os dados e emparelhamentos mantêm-se. Atenção: as APKs debug geradas em runners temporários podem usar chaves de assinatura diferentes; nesse caso a atualização por cima pode falhar e uma reinstalação apaga os dados locais. Para atualizações futuras sem perdas, configura uma chave de assinatura persistente no CI.
 
-```
-BUMP_v0.4_S24Ultra_TabS7FE_SoundMotion/
-  app/build.gradle
-  app/src/main/java/pt/johnny/bump/PulseView.java
-  app/src/main/java/pt/johnny/bump/PreviewActivity.java
-  app/src/main/java/pt/johnny/bump/ShareActivity.java
-  app/src/main/java/pt/johnny/bump/ReceiverService.java
-  tests/check_assets.py
-  CHANGELOG.md
-  README.md
-```
+Teste: partilha um PDF pequeno, espera até aparecer `Recebido`, toca `Abrir PDF`. Repete com uma fotografia e uma APK de origem confiável. Também deves poder abri-los no histórico BUMP.
 
-3. Faz commit (mensagem sugerida: `BUMP v0.5 — Wave Handoff`).
-4. Abre **Actions → Build BUMP APK**. Mantém o workflow `.github/workflows/build-apk.yml` que já compilava.
-5. Descarrega a APK de **Artifacts** e instala-a nos dois Galaxy. Conserva o mesmo `applicationId`.
-6. No BUMP, abre a pré-visualização e toca **Ver sequência AirDrop Wave** antes de testar com um PDF.
-
-Se ocorrer uma falha no GitHub Actions, descarrega o log completo para encontrarmos o erro inicial.
+Se a compilação falhar, envia o primeiro erro relevante do log. Esta versão ainda não foi compilada com o SDK Android num runner externo.

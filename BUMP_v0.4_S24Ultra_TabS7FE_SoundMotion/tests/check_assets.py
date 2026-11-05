@@ -33,7 +33,7 @@ pulse = (SRC / 'PulseView.java').read_text()
 for mode in ['WAIT', 'SEND', 'RECEIVE', 'SENT', 'RECEIVED', 'ERROR']:
     assert mode in pulse
 ET.parse(ROOT / 'app/src/main/AndroidManifest.xml')
-assert 'versionCode 7' in (ROOT / 'app/build.gradle').read_text()
+assert 'versionCode 8' in (ROOT / 'app/build.gradle').read_text()
 assert 'BUMP' in (ROOT / 'README.md').read_text()
 print('PASS Audio resources / event wiring / AndroidManifest XML: 6 WAV + 5 event cues')
 
@@ -56,3 +56,19 @@ assert 'long launchStartedAt' in share and '980 - elapsed' in share
 assert 'long waveStartedAt' in receiver and '960 - elapsed' in receiver
 assert 'Ver sequência AirDrop Wave' in preview and 'playDemo()' in preview
 print('PASS AirDrop Wave choreography / completion timing / demo / reduced motion')
+
+# v0.5.1: smart file opening is only possible after an explicit tap.
+open_file = (SRC / 'OpenFileActivity.java').read_text()
+shader = (SRC / 'LiquidRefraction.java').read_text()
+manifest = (ROOT / 'app/src/main/AndroidManifest.xml').read_text()
+assert manifest.count('android:name=".OpenFileActivity"') == 1
+assert manifest.count('android.permission.REQUEST_INSTALL_PACKAGES') == 1
+assert 'android:exported="false" android:theme="@style/BumpShareTheme"' in manifest
+for m in ['application/pdf','image/','application/vnd.android.package-archive','ACTION_VIEW','FLAG_GRANT_READ_URI_PERMISSION','canRequestPackageInstalls','ACTION_MANAGE_UNKNOWN_APP_SOURCES']:
+    assert m in open_file, m
+assert 'OpenFileActivity.intent' in (SRC / 'MainActivity.java').read_text()
+assert 'OpenFileActivity.intent' in receiver
+assert receiver.count('private void showOpenAction(') == 1
+assert 'RuntimeShader' in shader and 'createRuntimeShaderEffect' in shader
+assert 'LiquidRefraction liquid' in pulse
+print('PASS Smart open PDF/image/APK / safe user tap / AGSL 33+ fallback')

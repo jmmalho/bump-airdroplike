@@ -63,3 +63,12 @@ Abre `INSTALL_PATCH.md` para os oito ficheiros a substituir/adicionar. Mantém o
 - Sintaxe de 15 ficheiros Java analisada com o parser do Java 17.
 
 Estas verificações **não substituem** uma compilação Gradle/Android real.
+
+
+## v0.5.1 — Abrir ficheiros recebidos
+
+Após a confirmação de receção, aparece um botão pequeno `Abrir PDF` / `Ver fotografia` / `Instalar APK` junto ao efeito Wave, quando a sobreposição estiver autorizada e o ecrã estiver ligado. Também podes tocar em qualquer entrada do histórico BUMP para abrir a app correspondente. APKs só passam ao instalador após consentimento explícito e eventual autorização nas definições Android.
+
+Em Android 13+ a animação Wave pode refratar ligeiramente os elementos desenhados pelo BUMP usando AGSL. Não é uma deformação do conteúdo de outras aplicações.
+
+**Nota sobre instalação:** versões debug do GitHub Actions podem ter assinaturas diferentes entre execuções. Se Android recusar atualizar a APK, não desinstales sem antes aceitares que o histórico/emparelhamentos locais possam desaparecer.
