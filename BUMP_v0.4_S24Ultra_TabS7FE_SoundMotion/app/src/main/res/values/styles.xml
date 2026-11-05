@@ -10,7 +10,7 @@
   <style name="BumpShareTheme" parent="android:style/Theme.Material.Light.NoActionBar">
     <item name="android:windowIsTranslucent">true</item>
     <item name="android:windowBackground">@android:color/transparent</item>
-    <item name="android:windowDimAmount">0</item>
+    <item name="android:backgroundDimEnabled">false</item>
     <item name="android:windowNoTitle">true</item>
     <item name="android:colorAccent">#267DFF</item>
     <item name="android:windowLightStatusBar">false</item>
