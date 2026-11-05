@@ -1,16 +1,16 @@
-# Changelog
+# BUMP — Changelog
 
-## v0.4.3 — Liquid Glass / Blue Edition
+## 0.5.0-wave-beta
 
-- Novo `GlassStyle.java` com materiais translúcidos gradientes, highlights e fallback de cor quando o blur do Android está desativado.
-- `PulseView.java`: novo painel flutuante, bordas de vidro, reflexos, paleta azul-clara, tipografia escura de alto contraste e movimentos ascendentes conservados.
-- `ShareActivity.java`: blur opcional do Android, botões em vidro, margens em dp.
-- `ReceiverService.java`: efeito opcional de desfoque durante receção e ajuste de opacidade do overlay para evitar bloqueio de toques em Android 12+.
-- `PreviewActivity.java`: mesma linguagem visual para pré-visualização.
-- `MainActivity.java`: cartões de vidro, botões e fundo suave no histórico e definições.
-- `styles.xml`: dimming controlado em runtime com tema translucente corrigido.
-- Versão Android atualizada para `0.4.3-beta` (versionCode 6).
+- Novo motor Canvas de ondas e luz direcionais, sem dependências adicionais.
+- «Pronto»: anéis de respiração no painel de vidro.
+- «Enviar»: antecipação, onda expansiva, documento lançado pelo topo.
+- «Receber»: onda azul nasce na borda inferior, documento ascende e assenta.
+- «Enviado» e «Recebido»: anéis concêntricos e visto desenhado progressivamente.
+- Coordenação da confirmação: ficheiros muito pequenos não cortam a animação.
+- Novo botão «Ver sequência AirDrop Wave» na pré-visualização.
+- Respeita a configuração global de animações do Android e não anima em repouso de fundo.
+- Mantidas todas as funções da v0.4.3 e melhorias BLE da v0.4.2.
 
-## v0.4.2 — Proximidade melhorada
-
-Mantidos o limiar de proximidade mais tolerante, as leituras consecutivas com histerese, o anúncio BLE temporariamente mais ativo, o envio manual e a lógica de transferência e emparelhamento.
+**Limite atual:** movimento entre ecrãs é coreografado, não sincronizado por posição real.
+A compilação Android não foi executada neste ambiente.

@@ -18,6 +18,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
@@ -36,6 +37,8 @@ public final class ReceiverService extends Service implements NearbyLink.Listene
     private BroadcastReceiver radioReceiver;
     private Runnable overlayRemoval;
     private Runnable endActiveAdvertising;
+    private long waveStartedAt;
+    private Runnable pendingArrival;
     private boolean running;
     private static final int NOTIFICATION_ID = 47;
     @Override public IBinder onBind(Intent intent) { return null; }
@@ -136,16 +139,24 @@ public final class ReceiverService extends Service implements NearbyLink.Listene
     }
     @Override public void onIncomingSaved(String name, Uri uri) {
         MainActivity.updateStatus("Recebido: " + name);
-        if (overlay != null) {
-            overlay.received(name);
-            if (overlayRemoval != null) handler.removeCallbacks(overlayRemoval);
-            overlayRemoval = this::removeOverlay;
-            handler.postDelayed(overlayRemoval, 1750);
-        } else {
-            showOverlay("Recebido", true);
-            if (overlay != null) overlay.setFilename(name);
-        }
-        BumpSfx.play(this, BumpSfx.Cue.RECEIVED);
+        // Small PDFs may arrive in <200 ms. Preserve the visible arrival wave
+        // before displaying success, but never announce success before saving.
+        if (pendingArrival != null) handler.removeCallbacks(pendingArrival);
+        long elapsed = SystemClock.elapsedRealtime() - waveStartedAt;
+        pendingArrival = () -> {
+            pendingArrival = null;
+            if (overlay != null) {
+                overlay.received(name);
+                if (overlayRemoval != null) handler.removeCallbacks(overlayRemoval);
+                overlayRemoval = this::removeOverlay;
+                handler.postDelayed(overlayRemoval, 1800);
+            } else {
+                showOverlay("Recebido", true);
+                if (overlay != null) overlay.setFilename(name);
+            }
+            BumpSfx.play(this, BumpSfx.Cue.RECEIVED);
+        };
+        handler.postDelayed(pendingArrival, overlay != null ? Math.max(0, 960 - elapsed) : 0);
         MainActivity.refreshHistory();
         handler.postDelayed(() -> {
             // Allow reconnects for the next transfer after the sender leaves.
@@ -160,6 +171,7 @@ public final class ReceiverService extends Service implements NearbyLink.Listene
     }
     @Override public void onError(String message) {
         MainActivity.updateStatus(message);
+        if (pendingArrival != null) { handler.removeCallbacks(pendingArrival); pendingArrival = null; }
         if (overlay != null) {
             overlay.error(message);
             BumpSfx.play(this, BumpSfx.Cue.ERROR);
@@ -178,6 +190,7 @@ public final class ReceiverService extends Service implements NearbyLink.Listene
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
         overlay = new PulseView(this, false);
         overlay.setSubtitle(title);
+        if (!complete) waveStartedAt = SystemClock.elapsedRealtime();
         int flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
                 WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE |
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN |
@@ -210,6 +223,7 @@ public final class ReceiverService extends Service implements NearbyLink.Listene
     @Override public void onDestroy() {
         running = false;
         if (endActiveAdvertising != null) handler.removeCallbacks(endActiveAdvertising);
+        if (pendingArrival != null) handler.removeCallbacks(pendingArrival);
         if (radioReceiver != null) { try { unregisterReceiver(radioReceiver); } catch (Exception ignored) { } }
         removeOverlay();
         if (link != null) link.close();

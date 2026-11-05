@@ -10,6 +10,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.FrameLayout;
@@ -30,6 +31,7 @@ public final class ShareActivity extends Activity implements NearbyLink.Listener
     private TextView manual;
     private TextView cancel;
     private boolean started, triggered, destroyed, completed, readyChimePlayed;
+    private long launchStartedAt;
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -125,6 +127,7 @@ public final class ShareActivity extends Activity implements NearbyLink.Listener
         if (beacon != null) beacon.stopScan();
         pulse.setSubtitle("A enviar…");
         pulse.start(PulseView.Mode.SEND);
+        launchStartedAt = SystemClock.elapsedRealtime();
         BumpSfx.play(this, BumpSfx.Cue.SEND);
         link.sendFiles(new ArrayList<>(staged));
     }
@@ -158,10 +161,14 @@ public final class ShareActivity extends Activity implements NearbyLink.Listener
     @Override public void onIncomingSaved(String name, Uri uri) { }
     @Override public void onSending(String name) { pulse.setFilename(name); }
     @Override public void onSendingFinished() {
-        completed = true;
-        pulse.sent();
-        BumpSfx.play(this, BumpSfx.Cue.SENT);
-        handler.postDelayed(this::finish, 1350);
+        completed = true; // Transfer finished; visual confirmation waits for the launch to complete.
+        long elapsed = SystemClock.elapsedRealtime() - launchStartedAt;
+        handler.postDelayed(() -> {
+            if (destroyed || isFinishing()) return;
+            pulse.sent();
+            BumpSfx.play(this, BumpSfx.Cue.SENT);
+            handler.postDelayed(() -> { if (!isFinishing()) finish(); }, 1370);
+        }, Math.max(0, 980 - elapsed));
     }
     @Override public void onProgress(int pct) { pulse.setSubtitle("A transferir · " + pct + "%"); }
     @Override public void onDisconnected() {

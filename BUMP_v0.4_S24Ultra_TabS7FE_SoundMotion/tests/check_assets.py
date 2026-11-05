@@ -33,7 +33,7 @@ pulse = (SRC / 'PulseView.java').read_text()
 for mode in ['WAIT', 'SEND', 'RECEIVE', 'SENT', 'RECEIVED', 'ERROR']:
     assert mode in pulse
 ET.parse(ROOT / 'app/src/main/AndroidManifest.xml')
-assert 'versionCode 6' in (ROOT / 'app/build.gradle').read_text()
+assert 'versionCode 7' in (ROOT / 'app/build.gradle').read_text()
 assert 'BUMP' in (ROOT / 'README.md').read_text()
 print('PASS Audio resources / event wiring / AndroidManifest XML: 6 WAV + 5 event cues')
 
@@ -41,10 +41,18 @@ print('PASS Audio resources / event wiring / AndroidManifest XML: 6 WAV + 5 even
 glass = (SRC / 'GlassStyle.java').read_text()
 assert 'setBlurBehindRadius' in glass and 'isCrossWindowBlurEnabled' in glass
 assert 'GradientDrawable' in glass and 'PowerManager' in glass
-assert 'drawGlass' in pulse and 'drawAura' in pulse
+assert 'drawGlass' in pulse and 'drawBreathingRings' in pulse and 'drawHandoff' in pulse
 for activity in ['ShareActivity.java', 'PreviewActivity.java']:
     assert 'GlassStyle.prepareTranslucentActivity(this)' in (SRC / activity).read_text()
 assert 'params.alpha = .78f' in receiver
 assert 'android:windowDimAmount' not in (ROOT / 'app/src/main/res/values/styles.xml').read_text()
 ET.parse(ROOT / 'app/src/main/res/values/styles.xml')
 print('PASS Liquid Glass materials / optional system blur / fallback / theme XML')
+
+# Wave v0.5: both directions, real completion gating, and complete live preview.
+assert 'drawWaveLine' in pulse and 'drawConfirmation' in pulse
+assert 'ValueAnimator.areAnimatorsEnabled()' in pulse  # respects system accessibility settings
+assert 'long launchStartedAt' in share and '980 - elapsed' in share
+assert 'long waveStartedAt' in receiver and '960 - elapsed' in receiver
+assert 'Ver sequência AirDrop Wave' in preview and 'playDemo()' in preview
+print('PASS AirDrop Wave choreography / completion timing / demo / reduced motion')

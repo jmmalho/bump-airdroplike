@@ -5,6 +5,8 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.FrameLayout;
@@ -14,6 +16,7 @@ import android.widget.TextView;
 /** Sound + animation demo available even without a second device. Never transfers files. */
 public final class PreviewActivity extends Activity {
     private PulseView pulse;
+    private final Handler timeline = new Handler(Looper.getMainLooper());
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -44,6 +47,15 @@ public final class PreviewActivity extends Activity {
         label.setAlpha(.75f);
         label.setGravity(Gravity.CENTER);
         controls.addView(label, new LinearLayout.LayoutParams(-1, dp(34)));
+        TextView show = label("▶  Ver sequência AirDrop Wave");
+        show.setTextSize(14);
+        show.setTextColor(Color.WHITE);
+        show.setBackground(GlassStyle.action(this, 16));
+        show.setElevation(dp(4));
+        LinearLayout.LayoutParams demoParams = new LinearLayout.LayoutParams(-1, dp(48));
+        demoParams.setMargins(dp(3), dp(0), dp(3), dp(11));
+        controls.addView(show, demoParams);
+        show.setOnClickListener(v -> playDemo());
         LinearLayout top = new LinearLayout(this);
         addControl(top, "Pronto", PulseView.Mode.WAIT, BumpSfx.Cue.READY);
         addControl(top, "Enviar", PulseView.Mode.SEND, BumpSfx.Cue.SEND);
@@ -76,11 +88,42 @@ public final class PreviewActivity extends Activity {
         params.setMargins(dp(3), dp(3), dp(3), dp(3));
         line.addView(button, params);
         button.setOnClickListener(v -> {
+            timeline.removeCallbacksAndMessages(null);
             pulse.start(mode);
             pulse.setFilename("apontamentos.pdf");
             if (mode == PulseView.Mode.RECEIVE) pulse.setSubtitle("apontamentos.pdf");
             if (mode == PulseView.Mode.WAIT) pulse.setSubtitle("Aproxima do outro dispositivo");
             BumpSfx.play(this, sound);
         });
+    }
+
+    /** Visual-only, deterministic demonstration of both sides; does not contact any device. */
+    private void playDemo() {
+        timeline.removeCallbacksAndMessages(null);
+        pulse.setFilename("apontamentos.pdf");
+        pulse.setSubtitle("Aproxima do outro dispositivo");
+        pulse.start(PulseView.Mode.WAIT);
+        BumpSfx.play(this, BumpSfx.Cue.READY);
+        timeline.postDelayed(() -> {
+            pulse.start(PulseView.Mode.SEND);
+            BumpSfx.play(this, BumpSfx.Cue.SEND);
+        }, 1050);
+        timeline.postDelayed(() -> {
+            pulse.sent();
+            BumpSfx.play(this, BumpSfx.Cue.SENT);
+        }, 2390);
+        timeline.postDelayed(() -> {
+            pulse.setSubtitle("apontamentos.pdf");
+            pulse.start(PulseView.Mode.RECEIVE);
+            BumpSfx.play(this, BumpSfx.Cue.INCOMING);
+        }, 3380);
+        timeline.postDelayed(() -> {
+            pulse.received("apontamentos.pdf");
+            BumpSfx.play(this, BumpSfx.Cue.RECEIVED);
+        }, 4690);
+    }
+    @Override protected void onDestroy() {
+        timeline.removeCallbacksAndMessages(null);
+        super.onDestroy();
     }
 }

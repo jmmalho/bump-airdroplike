@@ -1,3 +1,35 @@
+# BUMP v0.5 — WAVE EDITION
+
+Projeto Android para S24 Ultra e Galaxy Tab S7 FE (sem NFC nem etiquetas).
+
+**O que mudou na v0.5:** animação *Wave Handoff* original: ao preparar a partilha,
+ondas discretas respiram à volta do documento; no envio, a onda atravessa o topo
+do ecrã e o documento transforma-se num rasto de luz ascendente; no tablet, uma
+onda nasce na parte inferior e o documento emerge do fundo, com amortecimento
+no final. O sucesso só é apresentado após a transferência real concluir.
+
+Em **BUMP → Som e movimento → Experimentar as animações e os sons**, usa o novo
+botão **Ver sequência AirDrop Wave** para ver o movimento completo sem ficheiros.
+Os botões individuais para os cinco estados continuam disponíveis.
+
+A linguagem visual é inspirada no AirDrop e Quick Share, mas o desenho e os sons
+são originais. O movimento é criado por Canvas + ValueAnimator, sem bibliotecas
+externas, blur por frame ou processos de rede adicionais.
+
+O gesto BLE, a transferência Nearby Connections, o histórico e a receção em
+segundo plano mantêm a implementação da v0.4.3. Bluetooth RSSI continua a não
+medir distâncias em centímetros. O 'handoff' sincroniza o significado visual
+nos dois ecrãs; não representa a posição espacial exata entre os aparelhos.
+
+**Instalação:** substitui os ficheiros indicados em `INSTALL_PATCH.md`; não
+alteres a pasta `.github/workflows` já funcional no teu repositório. Faz commit,
+executa a build e instala a APK gerada nos dois Galaxy.
+
+**Validação:** testes locais para lógica BLE, áudio, XML e ligação de eventos;
+compilação real da APK e fluidez nos dispositivos ainda por validar.
+
+---
+
 # BUMP v0.4.3 — Liquid Glass / Blue Edition
 
 Atualização visual para **Galaxy S24 Ultra ↔ Galaxy Tab S7 FE**, baseada no BUMP v0.4.2. Não necessita de NFC nem de acessórios.
