@@ -1,14 +1,41 @@
-# Instalar o BUMP v0.5.1 no GitHub
+# Instalação do patch BUMP v0.6 — Surface Handoff
 
-Parte da v0.5 Wave Handoff. Mantém o workflow do GitHub Actions atual.
+Este patch é incremental e foi criado sobre **v0.5.1 Smart Open Wave**.
 
-1. Abre a pasta do projeto Android, normalmente `BUMP_v0.4_S24Ultra_TabS7FE_SoundMotion`.
-2. Copia/substitui os ficheiros da pasta do patch para os mesmos caminhos no repositório.
-3. Ficheiros NOVOS: `app/src/main/java/pt/johnny/bump/OpenFileActivity.java`, `LiquidRefraction.java`.
-4. Ficheiros MODIFICADOS: `app/src/main/AndroidManifest.xml`, `app/build.gradle`, `MainActivity.java`, `ReceiverService.java`, `PulseView.java`.
-5. Faz commit. GitHub Actions deverá executar `Build BUMP APK`.
-6. Instala a APK atualizada em AMBOS os aparelhos. Se for assinada com a mesma chave da APK atual, os dados e emparelhamentos mantêm-se. Atenção: as APKs debug geradas em runners temporários podem usar chaves de assinatura diferentes; nesse caso a atualização por cima pode falhar e uma reinstalação apaga os dados locais. Para atualizações futuras sem perdas, configura uma chave de assinatura persistente no CI.
+## Importante
 
-Teste: partilha um PDF pequeno, espera até aparecer `Recebido`, toca `Abrir PDF`. Repete com uma fotografia e uma APK de origem confiável. Também deves poder abri-los no histórico BUMP.
+O teu repositório atual usa uma pasta principal chamada
+`BUMP_v0.4_S24Ultra_TabS7FE_SoundMotion`. O ZIP patch contém os ficheiros
+**relativos ao interior dessa pasta**. Não cries uma pasta nova com o nome v0.6:
+abre a pasta existente no GitHub e substitui os ficheiros com os mesmos caminhos.
 
-Se a compilação falhar, envia o primeiro erro relevante do log. Esta versão ainda não foi compilada com o SDK Android num runner externo.
+## Substituir os seguintes ficheiros
+
+- `app/src/main/java/pt/johnny/bump/PulseView.java`
+- `app/src/main/java/pt/johnny/bump/LiquidRefraction.java`
+- `app/src/main/java/pt/johnny/bump/GlassStyle.java`
+- `app/src/main/java/pt/johnny/bump/MainActivity.java`
+- `app/src/main/java/pt/johnny/bump/ShareActivity.java`
+- `app/src/main/java/pt/johnny/bump/ReceiverService.java`
+- `app/src/main/java/pt/johnny/bump/PreviewActivity.java`
+- `app/src/main/res/drawable/ic_bump.xml`
+- `app/build.gradle`
+- `tests/check_assets.py` (testes atualizados)
+
+Podes também substituir `README.md` e `CHANGELOG.md`.
+
+## Depois
+
+1. Faz commit. Mantém o workflow `.github/workflows/build-apk.yml` atual.
+2. Em Actions, verifica o job **Build APK**. Se der erro, envia o ZIP dos logs.
+3. Descarrega `BUMP-debug-APK` e instala a APK nos dois aparelhos.
+4. Abre BUMP → Som e movimento → Experimentar as animações e os sons → Ver Surface Handoff.
+5. Experimenta partilhar um PDF pequeno e um ficheiro maior.
+
+## Dados e atualização
+
+Não desinstales a APK anterior sem backup: as APKs debug podem ter assinaturas
+diferentes entre builds e uma reinstalação limpa pode apagar o histórico e
+as chaves locais de emparelhamento.
+
+Esta versão ainda não foi compilada/testada num Galaxy real.

@@ -141,6 +141,7 @@ public final class ReceiverService extends Service implements NearbyLink.Listene
     @Override public void onIncoming(String name) {
         MainActivity.updateStatus("A receber ficheiro");
         showOverlay("O ficheiro está a chegar…", false);
+        if (overlay != null) overlay.setFilename(name);
         BumpSfx.play(this, BumpSfx.Cue.INCOMING);
     }
     @Override public void onProgress(int percentage) {
@@ -171,7 +172,7 @@ public final class ReceiverService extends Service implements NearbyLink.Listene
                 handler.postDelayed(overlayRemoval, 5800);
             }
         };
-        handler.postDelayed(pendingArrival, overlay != null ? Math.max(0, 960 - elapsed) : 0);
+        handler.postDelayed(pendingArrival, overlay != null ? Math.max(0, 1480 - elapsed) : 0);
         MainActivity.refreshHistory();
         handler.postDelayed(() -> {
             // Allow reconnects for the next transfer after the sender leaves.
@@ -252,7 +253,7 @@ public final class ReceiverService extends Service implements NearbyLink.Listene
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, flags, PixelFormat.TRANSLUCENT);
         params.gravity = Gravity.TOP | Gravity.START;
         // A translucent full-screen overlay must not block touches on Android 12+.
-        params.alpha = .78f;
+        params.alpha = .78f; // Android 12+ pass-through touch threshold; keep below .8
         // True system blur is optional; PulseView still has a self-contained glass surface.
         if (android.os.Build.VERSION.SDK_INT >= 31 && GlassStyle.canBlur(this)) {
             params.flags |= WindowManager.LayoutParams.FLAG_BLUR_BEHIND;

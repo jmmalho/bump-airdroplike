@@ -167,8 +167,8 @@ public final class ShareActivity extends Activity implements NearbyLink.Listener
             if (destroyed || isFinishing()) return;
             pulse.sent();
             BumpSfx.play(this, BumpSfx.Cue.SENT);
-            handler.postDelayed(() -> { if (!isFinishing()) finish(); }, 1370);
-        }, Math.max(0, 980 - elapsed));
+            handler.postDelayed(() -> { if (!isFinishing()) finish(); }, 1250);
+        }, Math.max(0, 1480 - elapsed));
     }
     @Override public void onProgress(int pct) { pulse.setSubtitle("A transferir · " + pct + "%"); }
     @Override public void onDisconnected() {

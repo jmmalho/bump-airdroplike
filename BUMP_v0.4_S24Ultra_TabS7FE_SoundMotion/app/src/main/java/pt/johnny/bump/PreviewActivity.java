@@ -16,6 +16,7 @@ import android.widget.TextView;
 /** Sound + animation demo available even without a second device. Never transfers files. */
 public final class PreviewActivity extends Activity {
     private PulseView pulse;
+    private LinearLayout controls;
     private final Handler timeline = new Handler(Looper.getMainLooper());
 
     @Override public void onCreate(Bundle state) {
@@ -36,18 +37,18 @@ public final class PreviewActivity extends Activity {
         close.setElevation(dp(3));
         close.setOnClickListener(v -> finish());
 
-        LinearLayout controls = new LinearLayout(this);
+        controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.VERTICAL);
         controls.setPadding(dp(11), dp(13), dp(11), dp(11));
         controls.setBackground(GlassStyle.panel(this, 26));
         controls.setElevation(dp(9));
 
-        TextView label = label("PRÉ-VISUALIZAÇÃO · SEM TRANSFERÊNCIA");
+        TextView label = label("SIMULAÇÃO · SEM TRANSFERÊNCIA");
         label.setTextSize(10);
         label.setAlpha(.75f);
         label.setGravity(Gravity.CENTER);
         controls.addView(label, new LinearLayout.LayoutParams(-1, dp(34)));
-        TextView show = label("▶  Ver sequência AirDrop Wave");
+        TextView show = label("▶  Ver Surface Handoff");
         show.setTextSize(14);
         show.setTextColor(Color.WHITE);
         show.setBackground(GlassStyle.action(this, 16));
@@ -100,6 +101,7 @@ public final class PreviewActivity extends Activity {
     /** Visual-only, deterministic demonstration of both sides; does not contact any device. */
     private void playDemo() {
         timeline.removeCallbacksAndMessages(null);
+        controls.animate().alpha(0f).setDuration(240).withEndAction(() -> controls.setVisibility(View.INVISIBLE));
         pulse.setFilename("apontamentos.pdf");
         pulse.setSubtitle("Aproxima do outro dispositivo");
         pulse.start(PulseView.Mode.WAIT);
@@ -107,20 +109,24 @@ public final class PreviewActivity extends Activity {
         timeline.postDelayed(() -> {
             pulse.start(PulseView.Mode.SEND);
             BumpSfx.play(this, BumpSfx.Cue.SEND);
-        }, 1050);
+        }, 1010);
         timeline.postDelayed(() -> {
             pulse.sent();
             BumpSfx.play(this, BumpSfx.Cue.SENT);
-        }, 2390);
+        }, 2540);
         timeline.postDelayed(() -> {
             pulse.setSubtitle("apontamentos.pdf");
             pulse.start(PulseView.Mode.RECEIVE);
             BumpSfx.play(this, BumpSfx.Cue.INCOMING);
-        }, 3380);
+        }, 3540);
         timeline.postDelayed(() -> {
             pulse.received("apontamentos.pdf");
             BumpSfx.play(this, BumpSfx.Cue.RECEIVED);
-        }, 4690);
+        }, 5120);
+        timeline.postDelayed(() -> {
+            controls.setVisibility(View.VISIBLE);
+            controls.animate().alpha(1f).setDuration(360);
+        }, 6060);
     }
     @Override protected void onDestroy() {
         timeline.removeCallbacksAndMessages(null);

@@ -1,74 +1,69 @@
-# BUMP v0.5 — WAVE EDITION
+# BUMP v0.6 — Surface Handoff
 
-Projeto Android para S24 Ultra e Galaxy Tab S7 FE (sem NFC nem etiquetas).
+Prototipo Android de partilha por proximidade para Galaxy S24 Ultra e Galaxy Tab S7 FE.
+Este rebrand foi desenvolvido sobre a base **BUMP v0.5.1**, preservando o envio por
+Nearby Connections, a deteção BLE, os seis sons, o histórico e o Smart Open para PDF,
+imagens, vídeo e APK (instalação apenas com consentimento explícito).
 
-**O que mudou na v0.5:** animação *Wave Handoff* original: ao preparar a partilha,
-ondas discretas respiram à volta do documento; no envio, a onda atravessa o topo
-do ecrã e o documento transforma-se num rasto de luz ascendente; no tablet, uma
-onda nasce na parte inferior e o documento emerge do fundo, com amortecimento
-no final. O sucesso só é apresentado após a transferência real concluir.
+## Linguagem visual
 
-Em **BUMP → Som e movimento → Experimentar as animações e os sons**, usa o novo
-botão **Ver sequência AirDrop Wave** para ver o movimento completo sem ficheiros.
-Os botões individuais para os cinco estados continuam disponíveis.
+Inspirada na descrição do efeito de aproximação do AirDrop fornecida pelo utilizador.
+Não utiliza código, logótipos, ficheiros sonoros ou elementos de interface da Apple.
 
-A linguagem visual é inspirada no AirDrop e Quick Share, mas o desenho e os sons
-são originais. O movimento é criado por Canvas + ValueAnimator, sem bibliotecas
-externas, blur por frame ou processos de rede adicionais.
+- **Tipografia:** `sans-serif`/Roboto Android; título da cápsula 16sp médio, ficheiro
+  12sp regular, dicas 11sp. Plataforma nativa para melhor leitura nas duas dimensões.
+- **Tokens:** tinta `#1E2B41`, texto secundário `#65748D`, azul ótico `#257BF8`,
+  branco porcelana `#FFFFFF`, halo pérola `#DEF4FF`.
+- **Estrutura:** origem luminosa na parte superior (9,5% da altura, mínimo 52dp),
+  superfície quase transparente e cápsula de vidro opaca na zona inferior (68%).
+  Já não há uma grande caixa central cheia de círculos.
+- **Movimento:** preparação 500 ms com ease-out cúbico; onda radial + luz volumétrica
+  + lançamento do ficheiro em 1480 ms; confirmação 780 ms. A UI guarda tempo para
+  o gesto terminar mesmo que o PDF já tenha chegado.
+- **Recursos reais:** ícone vectorial original, seis efeitos sonoros originais já
+  incluídos no projeto, Canvas nativo + AGSL para refração; sem bibliotecas pesadas.
 
-O gesto BLE, a transferência Nearby Connections, o histórico e a receção em
-segundo plano mantêm a implementação da v0.4.3. Bluetooth RSSI continua a não
-medir distâncias em centímetros. O 'handoff' sincroniza o significado visual
-nos dois ecrãs; não representa a posição espacial exata entre os aparelhos.
+## Refração: o que é real e o que não é
 
-**Instalação:** substitui os ficheiros indicados em `INSTALL_PATCH.md`; não
-alteres a pasta `.github/workflows` já funcional no teu repositório. Faz commit,
-executa a build e instala a APK gerada nos dois Galaxy.
+No Android 13+ (`RuntimeShader` + `RenderEffect`), o shader desloca genuinamente os
+píxeis que **o BUMP desenha**. Esta é uma refração, não uma linha decorativa.
+Por motivos de isolamento e privacidade do Android, não é possível a uma aplicação
+normal deformar os píxeis ao vivo de outra aplicação por trás da sobreposição.
+Se o shader não for suportado, a animação Canvas continua a funcionar; em modo
+poupança de energia, a distorção é desativada.
 
-**Validação:** testes locais para lógica BLE, áudio, XML e ligação de eventos;
-compilação real da APK e fluidez nos dispositivos ainda por validar.
+A onda começa no topo de ambos os dispositivos, como na referência enviada.
+Os efeitos não têm sincronização espacial milimétrica (BLE RSSI não mede centímetros).
+São disparados nos eventos de envio e receção. O sistema só mostra sucesso depois
+de confirmar a transferência e o armazenamento dos dados.
 
----
+## Testar
 
-# BUMP v0.4.3 — Liquid Glass / Blue Edition
+1. Instala a mesma APK nos dois dispositivos. Abre o BUMP no tablet e ativa a receção.
+2. No S24 Ultra, seleciona um PDF → Partilhar → BUMP.
+3. Aproxima a parte superior dos dois dispositivos, mantendo o ecrã do tablet ligado.
+4. Usa «Enviar sem gesto» quando o BLE não detetar proximidade com fiabilidade.
+5. No BUMP, abre Som e movimento → Experimentar as animações e os sons →
+   **Ver Surface Handoff** para uma demonstração sem transferência.
+6. No final, abre o PDF/fotografia/APK a partir da confirmação ou do histórico.
 
-Atualização visual para **Galaxy S24 Ultra ↔ Galaxy Tab S7 FE**, baseada no BUMP v0.4.2. Não necessita de NFC nem de acessórios.
+### Atualização do GitHub
 
-## O que mudou
+O teu repositório mantém a pasta `BUMP_v0.4_S24Ultra_TabS7FE_SoundMotion`.
+Usa os caminhos descritos em `INSTALL_PATCH.md` do pacote patch; **não substituas o
+workflow GitHub Actions que já funciona no teu repositório**.
 
-- **Vidro translúcido azul-claro**, visível e legível, inspirado na sensação das janelas de AirDrop e Quick Share, sem copiar a interface da Apple ou da Samsung.
-- Efeito nativo de **desfoque da janela que está por trás**, quando Android 12+ / One UI o permite. Se a poupança de energia ou o próprio sistema o desativarem, a interface mantém o material translúcido com cores e contornos próprios.
-- Reflexos delicados, rebordo luminoso, sombra suave e halo azul contido dentro do painel.
-- Mesmos gestos e sons do BUMP v0.4.2; o PDF sai por cima e entra por baixo, com curvas ease-in/ease-out.
-- Botões de cancelar e envio manual agora com aparência de vidro, pré-visualização harmonizada e ecrã principal em azul-claro.
-- O efeito mais pesado só aparece enquanto se está a partilhar/receber; **não acrescenta varrimentos Bluetooth nem processamento de blur constante** ao serviço em segundo plano.
+### Validação
 
-## Segurança e limites
+- `tests/run.sh`: 21 testes de proximidade, integridade dos sons, coerência de
+  eventos, XML, estrutura do shader, abertura dos ficheiros e timing visual.
+- Compilação de `PulseView.java` e `LiquidRefraction.java` com Java 17 e interfaces
+  de teste Android: passou. **Não** é uma build Gradle nem compila AGSL na GPU.
+- Não foi possível gerar/instalar a APK nem testar a animação em hardware Galaxy
+  neste ambiente. O workflow existente do GitHub é o passo de integração real.
 
-- A deteção de proximidade continua a basear-se em sinal Bluetooth, portanto não mede centímetros exatos. O botão «Enviar sem gesto» mantém-se disponível.
-- Para animar a receção por cima de outras apps, concede a permissão «Mostrar sobre outras aplicações». O Android pode limitar o blur do overlay; nesse caso o painel continua translúcido por si só.
-- Se o ecrã estiver desligado, a receção pode ocorrer mas não é garantido acordar o tablet automaticamente.
-- A receção permanente exige o serviço em primeiro plano e um indicador do sistema operativo.
-- Não foi testado num Galaxy físico nem foi gerada uma APK neste ambiente. O ZIP é o **código-fonte**, para compilar no teu GitHub Actions.
+### Referências técnicas
 
-## Atualizar o repositório
-
-Abre `INSTALL_PATCH.md` para os oito ficheiros a substituir/adicionar. Mantém o workflow de GitHub Actions que já conseguiste corrigir.
-
-## Verificações executadas
-
-- 21 verificações do algoritmo de proximidade (`tests/run.sh`).
-- Integridade dos seis sons WAV e respetivos eventos.
-- XML do tema e manifesto válidos.
-- Sintaxe de 15 ficheiros Java analisada com o parser do Java 17.
-
-Estas verificações **não substituem** uma compilação Gradle/Android real.
-
-
-## v0.5.1 — Abrir ficheiros recebidos
-
-Após a confirmação de receção, aparece um botão pequeno `Abrir PDF` / `Ver fotografia` / `Instalar APK` junto ao efeito Wave, quando a sobreposição estiver autorizada e o ecrã estiver ligado. Também podes tocar em qualquer entrada do histórico BUMP para abrir a app correspondente. APKs só passam ao instalador após consentimento explícito e eventual autorização nas definições Android.
-
-Em Android 13+ a animação Wave pode refratar ligeiramente os elementos desenhados pelo BUMP usando AGSL. Não é uma deformação do conteúdo de outras aplicações.
-
-**Nota sobre instalação:** versões debug do GitHub Actions podem ter assinaturas diferentes entre execuções. Se Android recusar atualizar a APK, não desinstales sem antes aceitares que o histórico/emparelhamentos locais possam desaparecer.
+- https://developer.android.com/reference/android/graphics/RuntimeShader
+- https://developer.android.com/develop/ui/views/graphics/agsl
+- https://source.android.com/docs/core/display/window-blurs

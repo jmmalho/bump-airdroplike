@@ -1,16 +1,18 @@
-# BUMP v0.5.1 — Smart Open + Elastic Wave
+# v0.6.0 — Surface Handoff (rebrand)
 
-- Receção: ação contextual para abrir o documento diretamente após a animação, sem entrar na app.
-- PDF → leitor de PDFs; imagens → galeria/visualizador; vídeo e áudio → apps compatíveis.
-- APK → pedido de confirmação e instalador do Android, nunca execução automática.
-- Histórico: mesmo mecanismo de abertura segura, para ficheiros enviados ou recebidos.
-- MIME: fallback pelo nome/extensão quando Nearby informa application/octet-stream.
-- Android 13+: efeito de refração AGSL aplicado exclusivamente aos píxeis do BUMP durante a onda de envio/receção.
-- Versões anteriores: animação Canvas mantida como fallback.
-- Sem novas bibliotecas de terceiros; mantém BLE, Nearby, Liquid Glass e sons.
+- `PulseView.java` redesenhado: sem painel central dominante; material compacto,
+  origem luminosa superior, onda radial de superfície, token de ficheiro e conclusão.
+- `LiquidRefraction.java`: shader AGSL que desloca os píxeis próprios do BUMP no
+  Android 13+; desativação segura em aparelhos incompatíveis/poupança de energia.
+- Nova identidade de cor/ícone, tipografia nativa, material branco pérola.
+- Envio/receção usam uma linguagem visual topo→topo (referência AirDrop proximity).
+- A animação só termina após a conclusão real do envio/gravação; mínimos ajustados
+  para 1480 ms, sem atrasar os bytes reais.
+- Preview de demonstração atualizado; controlos recolhem durante a coreografia.
+- Mantidos: Smart Open (PDF, foto, vídeo, APK com consentimento), BLE/Nearby,
+  histórico, segurança de emparelhamento e os seis WAV originais.
 
-## Segurança e limites
-- Não abre automaticamente ficheiros quando a app está no background.
-- Android exige autorização do utilizador para instalar APKs de origem desconhecida.
-- Em dispositivos sem visualizador compatível, a app informa o utilizador.
-- A deformação ótica não altera o ecrã de outras aplicações.
+## Limites deliberados
+- O Android não permite refratar píxeis de outras apps numa overlay comum.
+- O gesto BLE não equivale a NFC/UWB nem garante toque de centímetros.
+- Compilação Gradle e análise visual em hardware pendentes.

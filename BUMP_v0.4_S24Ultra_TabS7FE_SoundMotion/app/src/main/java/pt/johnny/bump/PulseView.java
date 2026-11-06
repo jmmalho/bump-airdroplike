@@ -14,385 +14,353 @@ import android.graphics.Typeface;
 import android.view.View;
 
 /**
- * BUMP Motion v0.5 — GPU-friendly, original two-screen handoff choreography.
- * Outgoing files travel toward the sender's TOP edge; incoming files rise through
- * the receiver's BOTTOM edge. Both play the same blue wave motif without needing
- * synchronized clocks or access to the other device's screen coordinates.
+ * BUMP 0.6 · Surface Handoff
  *
- * All rendering is procedural Canvas. No bitmap blur, network, camera, mic or
- * 3rd-party animation engine; audio and delivery callbacks remain independent.
+ * The transfer is suggested by one continuous light field, not by floating
+ * decorative rings. The halo emerges at the TOP edge, the interface bends,
+ * and the receiver sees the continuation of the same visual motif.
+ *
+ * Important: this view refracts only pixels drawn by BUMP. Android does not
+ * allow an ordinary overlay to sample the live contents of other apps.
  */
 final class PulseView extends View {
     enum Mode { PREPARING, WAIT, SEND, RECEIVE, SENT, RECEIVED, ERROR }
 
-    private static final int INK = Color.rgb(28, 54, 91);
-    private static final int MUTED = Color.rgb(94, 124, 161);
-    private static final int BLUE = Color.rgb(39, 120, 248);
-    private static final float TWO_PI = (float) (Math.PI * 2.0);
-    private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-    private final RectF glass = new RectF();
+    private static final int INK = Color.rgb(30, 43, 65);
+    private static final int SECONDARY = Color.rgb(101, 116, 141);
+    private static final int ACCENT = Color.rgb(37, 123, 248);
+    private static final float PI = (float) Math.PI;
+    private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final Path path = new Path();
+    private final RectF card = new RectF();
+    private final RectF icon = new RectF();
+    private final LiquidRefraction refraction = new LiquidRefraction();
     private final boolean sender;
     private Mode mode = Mode.PREPARING;
     private String filename = "Documento";
     private String subtitle = "Aproxima do outro dispositivo";
-    private String errorText = "Não foi possível concluir";
-    private float breathe, progress = 1f, reveal = 0f;
-    private ValueAnimator idle, action, intro;
-    private final LiquidRefraction liquid = new LiquidRefraction();
+    private String errorText = "Tenta novamente";
+    private float phase = 1f;
+    private float reveal = 1f;
+    private float breath = 0f;
+    private ValueAnimator motion, entry, idle;
 
     PulseView(Context context, boolean isSender) {
         super(context);
         sender = isSender;
         setLayerType(View.LAYER_TYPE_HARDWARE, null);
-        start(Mode.PREPARING);
     }
 
     void setFilename(String name) {
         filename = name == null || name.trim().isEmpty() ? "Documento" : name;
         invalidate();
     }
-    void setSubtitle(String line) { subtitle = line == null ? "" : line; invalidate(); }
+    void setSubtitle(String value) { subtitle = value == null ? "" : value; invalidate(); }
 
     void start(Mode next) {
-        if (intro != null) intro.cancel();
-        if (action != null) action.cancel();
+        if (motion != null) { motion.cancel(); motion = null; }
+        if (entry != null) { entry.cancel(); entry = null; }
+        refraction.disable(this);
         mode = next;
-        liquid.disable(this);
-        progress = (next == Mode.WAIT || next == Mode.PREPARING) ? 1f : 0f;
-        if (!ValueAnimator.areAnimatorsEnabled()) { reveal = 1f; progress = 1f; invalidate(); return; }
-
+        phase = next == Mode.PREPARING || next == Mode.WAIT ? 1f : 0f;
+        reveal = (next == Mode.WAIT || next == Mode.PREPARING) ? 0f : 1f;
+        if (!ValueAnimator.areAnimatorsEnabled()) {
+            phase = 1f;
+            reveal = 1f;
+            invalidate();
+            return;
+        }
         if (next == Mode.WAIT || next == Mode.PREPARING) {
-            reveal = next == Mode.WAIT ? .44f : 0f;
-            intro = ValueAnimator.ofFloat(reveal, 1f);
-            intro.setDuration(next == Mode.WAIT ? 670 : 480);
-            intro.addUpdateListener(a -> { reveal = (float) a.getAnimatedValue(); invalidate(); });
-            intro.start();
-        } else reveal = 1f;
-
-        if (next == Mode.SEND || next == Mode.RECEIVE || next == Mode.SENT || next == Mode.RECEIVED) {
-            action = ValueAnimator.ofFloat(0f, 1f);
-            action.setDuration(next == Mode.SEND ? 1140 : next == Mode.RECEIVE ? 1200 : 760);
-            // Linear timeline with different physically-motivated easing for each element.
-            action.setInterpolator(input -> input);
-            action.addUpdateListener(a -> {
-                progress = (float) a.getAnimatedValue();
+            entry = ValueAnimator.ofFloat(0f, 1f);
+            entry.setDuration(500L);
+            entry.setInterpolator(v -> 1f - (float) Math.pow(1f - v, 3));
+            entry.addUpdateListener(a -> { reveal = (float) a.getAnimatedValue(); invalidate(); });
+            entry.start();
+        } else {
+            long duration = next == Mode.SEND || next == Mode.RECEIVE ? 1480L : 780L;
+            motion = ValueAnimator.ofFloat(0f, 1f);
+            motion.setDuration(duration);
+            motion.setInterpolator(v -> v);
+            motion.addUpdateListener(a -> {
+                phase = (float) a.getAnimatedValue();
                 if (mode == Mode.SEND || mode == Mode.RECEIVE)
-                    liquid.update(this, progress, mode == Mode.RECEIVE);
+                    refraction.update(this, phase, true);
                 invalidate();
             });
-            action.start();
+            motion.start();
         }
         invalidate();
     }
     void sent() { start(Mode.SENT); }
     void received(String name) { setFilename(name); start(Mode.RECEIVED); }
-    void error(String message) { errorText = message == null ? "Tenta novamente" : message; start(Mode.ERROR); }
+    void error(String message) {
+        errorText = message == null ? "Tenta novamente" : message;
+        start(Mode.ERROR);
+    }
 
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow();
         if (idle == null && ValueAnimator.areAnimatorsEnabled()) {
             idle = ValueAnimator.ofFloat(0f, 1f);
-            idle.setDuration(4200);
+            idle.setDuration(4500L);
             idle.setRepeatCount(ValueAnimator.INFINITE);
-            idle.setInterpolator(input -> input);
-            idle.addUpdateListener(a -> { breathe = (float) a.getAnimatedValue(); invalidate(); });
+            idle.setInterpolator(v -> v);
+            idle.addUpdateListener(a -> {
+                breath = (float) a.getAnimatedValue();
+                if (mode == Mode.WAIT || mode == Mode.PREPARING) invalidate();
+            });
             idle.start();
         }
     }
     @Override protected void onDetachedFromWindow() {
-        liquid.disable(this);
+        refraction.disable(this);
         if (idle != null) { idle.cancel(); idle = null; }
-        if (action != null) { action.cancel(); action = null; }
-        if (intro != null) { intro.cancel(); intro = null; }
+        if (motion != null) { motion.cancel(); motion = null; }
+        if (entry != null) { entry.cancel(); entry = null; }
         super.onDetachedFromWindow();
     }
 
-    private float dp(float n) { return n * getResources().getDisplayMetrics().density; }
-    private static float clamp(float t) { return Math.max(0f, Math.min(1f, t)); }
-    private static float smooth(float t) { t = clamp(t); return t*t*(3f-2f*t); }
-    private static float out(float t) { t = clamp(t); return 1f-(float)Math.pow(1f-t, 3); }
-    private static float in(float t) { t = clamp(t); return t*t*t; }
-    private static float interval(float t, float from, float to) { return clamp((t-from)/(to-from)); }
-    private static float bell(float t, float a, float b, float c, float d) {
-        return smooth(interval(t,a,b)) * (1f-smooth(interval(t,c,d)));
+    private float dp(float x) { return x * getResources().getDisplayMetrics().density; }
+    private static float clamp(float x) { return Math.max(0f, Math.min(1f, x)); }
+    private static float smooth(float x) { x = clamp(x); return x*x*(3f - 2f*x); }
+    private static float easeOut(float x) { x = clamp(x); return 1f-(1f-x)*(1f-x)*(1f-x); }
+    private static float window(float t,float a,float b,float c,float d) {
+        return smooth((t-a)/(b-a))*(1f-smooth((t-c)/(d-c)));
     }
-    private int alpha(int a, float fraction) { return Math.round(clamp(fraction)*a); }
-    private void fill(int color) {
-        p.setShader(null); p.setColor(color); p.setStyle(Paint.Style.FILL);
-        p.setStrokeWidth(dp(1)); p.clearShadowLayer();
+    private static int opacity(float alpha) { return Math.round(clamp(alpha)*255f); }
+    private void color(int argb) {
+        paint.reset();
+        paint.setAntiAlias(true);
+        paint.setFilterBitmap(true);
+        paint.setColor(argb);
+        paint.setStyle(Paint.Style.FILL);
     }
-    private void shader(Shader s) { p.setShader(s); p.setStyle(Paint.Style.FILL); p.setColor(Color.WHITE); p.clearShadowLayer(); }
+    private void gradient(Shader shader) { color(Color.WHITE); paint.setShader(shader); }
 
-    @Override protected void onDraw(Canvas c) {
-        super.onDraw(c);
-        final float w = getWidth(), h = getHeight();
-        if (w <= 0 || h <= 0) return;
-        final float cx = w/2f;
-        final float gw = Math.min(w-dp(34), dp(386));
-        final float gh = Math.min(h-dp(155), dp(352));
-        glass.set(cx-gw/2f, (h-gh)*.48f, cx+gw/2f, (h-gh)*.48f+gh);
-        final float cy = glass.top + Math.min(dp(137), gh*.405f);
-        final float titleY = glass.top + gh*.71f;
+    @Override protected void onDraw(Canvas canvas) {
+        super.onDraw(canvas);
+        float width = getWidth(), height = getHeight();
+        if (width < 1 || height < 1) return;
+        final float mid = width*.5f;
+        final float top = Math.max(dp(52f), height*.095f);
+        final boolean flowing = mode == Mode.SEND || mode == Mode.RECEIVE;
 
-        drawBackdrop(c,w,h,cx,cy);
-        drawGlass(c,cx,cy);
+        // Context is always visible: no full-screen opaque activity backdrop.
+        color(Color.argb(41, 10, 20, 42));
+        canvas.drawRect(0, 0, width, height, paint);
+        gradient(new LinearGradient(0, 0, width, height,
+                new int[]{Color.argb(19, 58, 103, 186), Color.TRANSPARENT,
+                        Color.argb(18, 8, 19, 44)}, null, Shader.TileMode.CLAMP));
+        canvas.drawRect(0, 0, width, height, paint);
+        paint.setShader(null);
 
-        // The light path is deliberately allowed beyond the frosted sheet and
-        // the device display bounds: sender exits TOP, receiver enters BOTTOM.
-        if (mode == Mode.SEND) drawHandoff(c,cx,cy,w,h,false);
-        else if (mode == Mode.RECEIVE) drawHandoff(c,cx,cy,w,h,true);
-        else drawBreathingRings(c,cx,cy);
-
-        float fileY = cy + (float)Math.sin(breathe*TWO_PI)*dp(2.4f);
-        float scale = .95f + .05f*reveal;
-        float opacity = reveal;
-        float rotation = 0;
-        if (mode == Mode.SEND) {
-            float launch = out(interval(progress,.15f,.94f));
-            float squash = bell(progress,.02f,.09f,.17f,.27f);
-            fileY = cy + dp(8)*squash - launch*(cy+dp(135));
-            scale = (1f-.09f*squash)*(1f-.27f*launch);
-            opacity = 1f-smooth(interval(progress,.67f,.97f));
-            rotation = -6f*bell(progress,.11f,.23f,.62f,.91f);
-        } else if (mode == Mode.RECEIVE) {
-            float rise = out(interval(progress,.17f,.88f));
-            fileY = h + dp(106) - rise*(h + dp(106) - cy);
-            scale = .70f+.30f*rise + .055f*bell(progress,.74f,.89f,.93f,1f);
-            opacity = smooth(interval(progress,.19f,.47f));
-            rotation = 7f*(1f-rise);
-        } else if (mode == Mode.SENT || mode == Mode.ERROR || mode == Mode.PREPARING) opacity = 0f;
-        else if (mode == Mode.RECEIVED) scale = .95f+.05f*out(progress);
-        else { fileY += (1f-reveal)*dp(19); }
-
-        drawFile(c,cx,fileY,opacity,scale,rotation);
-        if (mode == Mode.SENT || mode == Mode.RECEIVED) drawConfirmation(c,cx,cy,mode == Mode.RECEIVED);
-        drawLabels(c,cx,titleY);
+        float amplitude = flowing ? window(phase,.015f,.2f,.76f,.99f)
+                : mode == Mode.WAIT ? .30f * (.7f + .3f*(float)Math.sin(2f*PI*breath))
+                : mode == Mode.RECEIVED || mode == Mode.SENT ? .36f*(1f-easeOut(phase)) : .14f;
+        drawEdgeLight(canvas, width, height, mid, top, amplitude, flowing);
+        if (flowing) drawRefractionFront(canvas, width, height, mid, top);
+        if (mode == Mode.SENT || mode == Mode.RECEIVED) drawCompletion(canvas, mid, top);
+        drawFileMotion(canvas, width, height, mid, top);
+        drawStatusCapsule(canvas, width, height, mid);
     }
 
-    private void drawBackdrop(Canvas c,float w,float h,float cx,float cy) {
-        fill(Color.argb(52,12,30,65));
-        c.drawRect(0,0,w,h,p);
-        shader(new LinearGradient(0,0,w,h,Color.argb(23,65,137,231),Color.argb(7,33,56,111),Shader.TileMode.CLAMP));
-        c.drawRect(0,0,w,h,p); p.setShader(null);
+    private void drawEdgeLight(Canvas canvas,float w,float h,float x,float top,float strength,boolean moving) {
+        float t = phase;
+        float compact = moving ? window(t,.03f,.18f,.47f,.85f) : strength;
+        float haloRadius = Math.max(dp(175), w*.57f);
+        // Peripheral light scatters naturally through the glass, no hard discs.
+        gradient(new RadialGradient(x,top,haloRadius,
+                new int[]{Color.argb(opacity(strength*.43f), 222, 242, 255),
+                        Color.argb(opacity(strength*.27f), 81, 163, 254),
+                        Color.argb(opacity(strength*.09f), 41, 109, 219),Color.TRANSPARENT},
+                new float[]{0f,.20f,.51f,1f},Shader.TileMode.CLAMP));
+        canvas.drawCircle(x,top,haloRadius,paint);paint.setShader(null);
+        float innerR = dp(19) + (moving ? dp(13)*(1f-smooth(t)) : dp(5));
+        gradient(new RadialGradient(x,top,innerR,
+                new int[]{Color.argb(opacity(compact*.93f),255,255,255),
+                        Color.argb(opacity(compact*.67f),220,244,255),
+                        Color.argb(opacity(compact*.1f),97,164,255),Color.TRANSPARENT},
+                new float[]{0f,.22f,.64f,1f},Shader.TileMode.CLAMP));
+        canvas.drawCircle(x,top,innerR,paint);paint.setShader(null);
+        if (moving) {
+            float stretch = window(t,.19f,.32f,.54f,.77f);
+            gradient(new LinearGradient(x,top-dp(55),x,top+dp(155),
+                    new int[]{Color.TRANSPARENT,Color.argb(opacity(stretch*.28f),255,255,255),
+                            Color.argb(opacity(stretch*.10f),66,168,255),Color.TRANSPARENT},
+                    null,Shader.TileMode.CLAMP));
+            path.reset();
+            path.moveTo(x-dp(11),top-dp(31));
+            path.cubicTo(x-dp(24),top+dp(37),x-dp(47),top+dp(77),x-dp(79),top+dp(157));
+            path.lineTo(x+dp(79),top+dp(157));
+            path.cubicTo(x+dp(47),top+dp(77),x+dp(24),top+dp(37),x+dp(11),top-dp(31));
+            path.close(); canvas.drawPath(path,paint);paint.setShader(null);
+        }
+    }
+
+    private void drawRefractionFront(Canvas canvas,float w,float h,float x,float top) {
+        // A refractive wave travels across the WHOLE surface. The actual pixel
+        // displacement is performed by LiquidRefraction on Android 13+.
+        float t = phase;
+        float diag = (float) Math.hypot(w*.5f, h-top);
+        float radius = dp(8) + easeOut(clamp((t-.075f)/.83f))*diag;
+        float strength = window(t,.03f,.20f,.75f,.99f);
+        for (int i=0;i<3;i++) {
+            float r = radius - dp(i*15f);
+            if (r <= 0) continue;
+            float light = strength*(1f-i*.24f);
+            color(Color.argb(opacity(light*(i==0?.24f:.13f)),158,214,255));
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dp(i==0?11f:5f));
+            canvas.drawCircle(x,top,r,paint);
+            color(Color.argb(opacity(light*(i==0?.68f:.30f)),238,251,255));
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dp(i==0?1.6f:.8f));
+            canvas.drawCircle(x,top,r,paint);
+        }
+        // The wave is brightest locally rather than washing out the whole UI.
+        if (strength > .005f) {
+            float focusY = top + radius*.53f;
+            gradient(new RadialGradient(x,focusY,dp(110),
+                    new int[]{Color.argb(opacity(strength*.09f),255,255,255),
+                            Color.TRANSPARENT},null,Shader.TileMode.CLAMP));
+            canvas.drawCircle(x,focusY,dp(110),paint);
+            paint.setShader(null);
+        }
+    }
+
+    private void drawFileMotion(Canvas canvas,float w,float h,float mid,float top) {
         if (mode != Mode.SEND && mode != Mode.RECEIVE) return;
-        float a = bell(progress,.08f,.3f,.66f,1f);
-        float y = mode == Mode.SEND ? dp(26) : h-dp(26);
-        shader(new RadialGradient(cx,y,Math.max(w,dp(190)),new int[]{Color.argb(alpha(70,a),59,163,255),Color.argb(alpha(28,a),74,142,250),Color.TRANSPARENT},null,Shader.TileMode.CLAMP));
-        c.drawCircle(cx,y,Math.max(w,dp(190)),p);p.setShader(null);
-    }
-
-    private void drawGlass(Canvas c,float cx,float cy) {
-        float r = dp(34);
-        float op = .78f+.22f*reveal;
-        float expansion = (1f-reveal)*dp(20);
-        RectF rect = new RectF(glass.left,glass.top+expansion,glass.right,glass.bottom+expansion);
-        fill(Color.argb(alpha(65,op),20,67,147));
-        p.setShadowLayer(dp(29),0,dp(14),Color.argb(alpha(68,op),26,72,150));
-        c.drawRoundRect(rect,r,r,p);p.clearShadowLayer();
-        shader(new LinearGradient(rect.left,rect.top,rect.right,rect.bottom,
-                new int[]{Color.argb(alpha(248,op),253,255,255),Color.argb(alpha(227,op),220,238,255),Color.argb(alpha(247,op),248,252,255)},
-                new float[]{0f,.55f,1f},Shader.TileMode.CLAMP));
-        c.drawRoundRect(rect,r,r,p);p.setShader(null);
-
-        c.save();path.reset();path.addRoundRect(rect,r,r,Path.Direction.CW);c.clipPath(path);
-        float shimmer = .5f+.5f*(float)Math.sin(breathe*TWO_PI);
-        shader(new RadialGradient(cx-dp(79),rect.top+dp(40),dp(230),
-                new int[]{Color.argb(alpha(62,op),255,255,255),Color.argb(alpha(27,op),89,170,255),Color.TRANSPARENT},null,Shader.TileMode.CLAMP));
-        c.drawRect(rect,p);p.setShader(null);
-        float spec = rect.left+rect.width()*(.22f+.28f*shimmer);
-        shader(new LinearGradient(spec-dp(75),rect.top,spec+dp(80),rect.bottom,
-                new int[]{Color.TRANSPARENT,Color.argb(alpha(29,op),255,255,255),Color.TRANSPARENT},
-                null,Shader.TileMode.CLAMP));c.drawRect(rect,p);p.setShader(null);
-        c.restore();
-
-        fill(Color.argb(alpha(227,op),255,255,255));p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(dp(1.2f));
-        c.drawRoundRect(rect.left+dp(.8f),rect.top+dp(.8f),rect.right-dp(.8f),rect.bottom-dp(.8f),r,r,p);
-        fill(Color.argb(alpha(41,op),67,138,239));p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(dp(.7f));
-        c.drawRoundRect(rect.left+dp(2.4f),rect.top+dp(2.4f),rect.right-dp(2.4f),rect.bottom-dp(2.4f),r-dp(2),r-dp(2),p);
-        p.setStyle(Paint.Style.FILL);
-        // Tiny native-feeling header and transfer-direction indicator.
-        fill(Color.argb(alpha(228,op),48,137,249));
-        c.drawCircle(cx-dp(34),rect.top+dp(37),dp(3.7f),p);
-        text(c,"BUMP",cx+dp(7),rect.top+dp(41),12,Color.argb(alpha(245,op),55,107,175),true,rect.width()-dp(36));
-        fill(Color.argb(alpha(54,op),95,155,232));
-        c.drawRoundRect(rect.left+dp(32),rect.bottom-dp(43),rect.right-dp(32),rect.bottom-dp(42),dp(1),dp(1),p);
-        for (int i=0;i<3;i++) {
-            float active = .35f+.65f*clamp((float)Math.sin(breathe*TWO_PI+i*1.3f)*.5f+.5f);
-            fill(Color.argb(alpha(174,op*active),47,130,247));
-            c.drawCircle(cx+dp((i-1)*12),rect.bottom-dp(24),dp(i==1?2.5f:1.8f),p);
-        }
-    }
-
-    private void drawBreathingRings(Canvas c,float cx,float cy) {
-        float activity = mode == Mode.WAIT ? reveal : mode == Mode.RECEIVED ? 1f : mode == Mode.ERROR ? .4f : .68f;
-        float pulse = .5f+.5f*(float)Math.sin(breathe*TWO_PI);
-        shader(new RadialGradient(cx,cy,dp(118),
-                new int[]{Color.argb(alpha(83,activity),86,173,255),Color.argb(alpha(52,activity),97,186,255),Color.TRANSPARENT},
-                new float[]{0f,.43f,1f},Shader.TileMode.CLAMP));
-        c.drawCircle(cx,cy,dp(118),p);p.setShader(null);
-        for (int i=0;i<3;i++) {
-            float f=(breathe+i/3f)%1f;
-            float r=dp(59+f*54);
-            float a=activity*(1f-smooth(f))*(i==0?.60f:.38f);
-            fill(Color.argb(alpha(124,a),52,153,255));
-            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(dp(1.35f-.52f*f));
-            c.drawCircle(cx,cy,r,p);
-        }
-        p.setStyle(Paint.Style.FILL);
-        fill(Color.argb(alpha(53,activity*(.6f+.4f*pulse)),36,123,248));
-        c.drawCircle(cx,cy,dp(55),p);
-    }
-
-    /** Shared luminous ribbon: launches upward from sender, enters from bottom on receiver. */
-    private void drawHandoff(Canvas c,float cx,float cy,float w,float h,boolean incoming) {
-        float t = progress;
-        float entry = incoming ? smooth(interval(t,.03f,.31f)) : smooth(interval(t,.1f,.34f));
-        float envelope = bell(t,.02f,.24f,.78f,1f);
-        float edgeY = incoming ? h-dp(9) : dp(9);
-        float centerY = incoming ? h-(h-cy)*out(interval(t,.18f,.83f)) : cy-(cy+dp(108))*out(interval(t,.18f,.92f));
-        float energy = incoming ? bell(t,.01f,.2f,.73f,.99f) : bell(t,.10f,.26f,.76f,.99f);
-
-        // Wide pearlescent energy wave at the edge and two delayed follow-up waves.
-        for (int j=0;j<3;j++) {
-            float delay=j*.14f;
-            float wave = smooth(interval(t, .08f+delay, .43f+delay));
-            float y = incoming ? h+dp(48)-wave*dp(156) : -dp(48)+wave*dp(156);
-            float a=energy*(1f-j*.23f);
-            drawWaveLine(c,cx,y,w,a,incoming,j);
-        }
-        // Directional thread is a finite-distance glow with a narrow bright spine.
-        float ribbonAlpha = entry*energy;
-        if (ribbonAlpha>.005f) {
-            float y1=incoming?centerY:cy;
-            float y2=incoming?h+dp(35):centerY;
-            float left=cx-dp(43),right=cx+dp(43);
-            shader(new LinearGradient(cx,y1,cx,y2,
-                    new int[]{Color.argb(alpha(3,ribbonAlpha),68,167,255),Color.argb(alpha(106,ribbonAlpha),71,164,255),Color.argb(alpha(9,ribbonAlpha),71,164,255)},
-                    new float[]{0f,.56f,1f},Shader.TileMode.CLAMP));
-            path.reset();path.moveTo(left,y1);path.quadTo(cx-dp(15),(.5f*(y1+y2)),cx-dp(8),y2);
-            path.lineTo(cx+dp(8),y2);path.quadTo(cx+dp(15),(.5f*(y1+y2)),right,y1);path.close();
-            c.drawPath(path,p);p.setShader(null);
-            fill(Color.argb(alpha(167,ribbonAlpha),119,212,255));p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(dp(1.7f));
-            c.drawLine(cx,y1,cx,y2,p);p.setStyle(Paint.Style.FILL);
-        }
-        // Soft portal glow at the device boundary.
-        shader(new RadialGradient(cx,edgeY,Math.max(dp(130),w*.58f),
-                new int[]{Color.argb(alpha(90,envelope),43,153,255),Color.argb(alpha(29,envelope),84,188,255),Color.TRANSPARENT},
-                null,Shader.TileMode.CLAMP));
-        c.drawCircle(cx,edgeY,Math.max(dp(130),w*.58f),p);p.setShader(null);
-        // Small deterministic motes, no randomness / allocation every frame.
-        for (int i=0;i<9;i++) {
-            float f=(i*.23f+t*1.7f)%1f;
-            float spread=(i%2==0?1f:-1f)*dp(19+(i*19)%84);
-            float yy=incoming ? h-dp(f*260) : dp(f*260);
-            float aa=energy*(1f-f)*(.44f+.56f*(i%3)/2f);
-            fill(Color.argb(alpha(160,aa),72,167,255));
-            c.drawCircle(cx+spread,yy,dp(.9f+(i%3)*.45f),p);
-        }
-    }
-
-    private void drawWaveLine(Canvas c,float cx,float y,float width,float amount,boolean incoming,int index) {
-        if (amount<.005f) return;
-        float span=Math.min(width*.54f,dp(280));
-        float lift=dp((index==0?26:13)*(incoming?-1f:1f));
-        path.reset();path.moveTo(cx-span,y);
-        path.cubicTo(cx-span*.57f,y+lift,cx-span*.34f,y-lift,cx,y);
-        path.cubicTo(cx+span*.34f,y+lift,cx+span*.57f,y-lift,cx+span,y);
-        fill(Color.argb(alpha(130,amount),91,187,255));
-        p.setStyle(Paint.Style.STROKE);p.setStrokeCap(Paint.Cap.ROUND);
-        p.setStrokeWidth(dp(index==0?5.5f:2.7f));c.drawPath(path,p);
-        fill(Color.argb(alpha(223,amount),220,248,255));p.setStyle(Paint.Style.STROKE);
-        p.setStrokeWidth(dp(index==0?1.7f:.95f));c.drawPath(path,p);
-        p.setStyle(Paint.Style.FILL);
-    }
-
-    private void drawFile(Canvas c,float x,float y,float opacity,float scale,float degrees) {
-        if (opacity<.01f) return;
-        c.save();c.translate(x,y);c.rotate(degrees);c.scale(scale,scale);
-        float fw=dp(80),fh=dp(98);
-        fill(Color.argb(alpha(49,opacity),31,128,255));
-        c.drawRoundRect(-fw/2-dp(10),-fh/2-dp(10),fw/2+dp(10),fh/2+dp(10),dp(20),dp(20),p);
-        shader(new LinearGradient(0,-fh/2,0,fh/2,
-                Color.argb(alpha(255,opacity),255,255,255),Color.argb(alpha(255,opacity),224,243,255),Shader.TileMode.CLAMP));
-        p.setShadowLayer(dp(16),0,dp(7),Color.argb(alpha(76,opacity),35,103,208));
-        c.drawRoundRect(-fw/2,-fh/2,fw/2,fh/2,dp(12),dp(12),p);
-        p.clearShadowLayer();p.setShader(null);
-        fill(Color.argb(alpha(246,opacity),126,187,255));
-        path.reset();path.moveTo(fw/2-dp(24),-fh/2);path.lineTo(fw/2-dp(24),-fh/2+dp(24));
-        path.lineTo(fw/2,-fh/2+dp(24));path.close();c.drawPath(path,p);
-        for(int i=0;i<3;i++) {
-            fill(Color.argb(alpha(213-i*27,opacity),51,130,245));
-            c.drawRoundRect(-dp(23),dp(-4+i*15),dp(23-i*5),dp(-1+i*15),dp(2),dp(2),p);
-        }
-        String type="PDF";
-        String lower=filename.toLowerCase(java.util.Locale.ROOT);
-        if(lower.endsWith(".jpg")||lower.endsWith(".jpeg")||lower.endsWith(".png"))type="IMG";
-        else if(lower.endsWith(".mp4")||lower.endsWith(".mov"))type="VID";
-        else if(!lower.endsWith(".pdf"))type="FILE";
-        fill(Color.argb(alpha(244,opacity),39,119,241));
-        c.drawRoundRect(-dp(27),-dp(31),dp(6),-dp(13),dp(5),dp(5),p);
-        text(c,type,-dp(10.5f),-dp(18),8,Color.argb(alpha(255,opacity),255,255,255),true,dp(38));
-        c.restore();
-    }
-
-    private void drawConfirmation(Canvas c,float x,float y,boolean incoming) {
-        float t=progress;
-        float burst=out(interval(t,0f,.76f));
-        float opacity=1f-smooth(interval(t,.5f,1f));
-        for(int i=0;i<3;i++) {
-            float f=out(interval(t,i*.09f,.73f+i*.09f));
-            fill(Color.argb(alpha(140-i*28,opacity),52,148,255));
-            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(dp(2.6f-i*.55f));
-            c.drawCircle(x,y,dp(42+f*(98+i*27)),p);
-        }
-        p.setStyle(Paint.Style.FILL);
-        fill(Color.argb(alpha(230,smooth(interval(t,.03f,.27f))),253,255,255));
-        p.setShadowLayer(dp(15),0,dp(7),Color.argb(alpha(91,1f-t*.5f),36,137,244));
-        c.drawCircle(x,y,dp(37+burst*3),p);p.clearShadowLayer();
-        // The tick draws progressively, not as an instant icon.
-        float stroke=smooth(interval(t,.17f,.68f));
-        fill(Color.rgb(36,123,245));p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(dp(4.5f));
-        p.setStrokeCap(Paint.Cap.ROUND);p.setStrokeJoin(Paint.Join.ROUND);
-        path.reset();
-        if(stroke<=.41f) {
-            float part=stroke/.41f;
-            path.moveTo(x-dp(15),y+dp(1));
-            path.lineTo(x-dp(15)+dp(12)*part,y+dp(1)+dp(11)*part);
+        float t=phase;
+        float launch = easeOut(clamp((t-.09f)/.74f));
+        float pointY = h*.665f;
+        float y;
+        float scale;
+        float alpha;
+        if (mode == Mode.SEND) {
+            y = pointY + dp(15f)*window(t,.01f,.08f,.15f,.29f)
+                    - (pointY-top+dp(35))*launch;
+            alpha = 1f - smooth((t-.68f)/.3f);
+            scale = 1f-.54f*launch;
         } else {
-            float part=(stroke-.41f)/.59f;
-            path.moveTo(x-dp(15),y+dp(1));path.lineTo(x-dp(3),y+dp(12));
-            path.lineTo(x-dp(3)+dp(23)*part,y+dp(12)-dp(27)*part);
+            y = top-dp(30)+(pointY-top+dp(30))*launch;
+            alpha = smooth((t-.12f)/.28f)*(1f-smooth((t-.8f)/.18f));
+            scale = .46f+.54f*launch;
         }
-        c.drawPath(path,p);p.setStyle(Paint.Style.FILL);
+        if (alpha <= .003f) return;
+        canvas.save();canvas.translate(mid,y);canvas.scale(scale,scale);
+        float size=dp(51);
+        color(Color.argb(opacity(.17f*alpha),35,126,252));
+        paint.setShadowLayer(dp(19),0,dp(9),Color.argb(opacity(.23f*alpha),25,108,237));
+        canvas.drawRoundRect(-size*.5f,-size*.5f,size*.5f,size*.5f,dp(14),dp(14),paint);
+        paint.clearShadowLayer();
+        gradient(new LinearGradient(-size*.5f,-size*.5f,size*.5f,size*.5f,
+                new int[]{Color.argb(opacity(alpha),255,255,255),
+                        Color.argb(opacity(alpha),225,240,255)},null,Shader.TileMode.CLAMP));
+        canvas.drawRoundRect(-size*.5f,-size*.5f,size*.5f,size*.5f,dp(13),dp(13),paint);
+        paint.setShader(null);
+        label(canvas,typeLabel(),0,dp(3),11,Color.argb(opacity(alpha),37,119,237),true,size-dp(10),Paint.Align.CENTER);
+        canvas.restore();
     }
 
-    private void drawLabels(Canvas c,float x,float y) {
-        String title,detail,small="";
-        switch(mode) {
-            case PREPARING: title="A preparar…"; detail=filename; break;
-            case WAIT: title="Pronto a partilhar"; detail=filename; small=subtitle; break;
-            case SEND: title="A enviar"; detail=filename; small=subtitle; break;
-            case RECEIVE: title="A receber"; detail=subtitle; break;
-            case SENT: title="Enviado"; detail=filename; break;
-            case RECEIVED: title="Recebido"; detail=filename; small="Guardado em Downloads/BUMP"; break;
-            default: title=sender?"Não foi possível enviar":"Não foi possível receber";detail=errorText;
-        }
-        float max=glass.width()-dp(48);
-        text(c,title,x,y,17,INK,true,max);
-        text(c,detail,x,y+dp(28),13,MUTED,false,max);
-        if(!small.isEmpty())text(c,small,x,y+dp(51),11,Color.rgb(66,130,206),false,max);
+    private void drawCompletion(Canvas canvas,float x,float top) {
+        float t=phase;
+        float a=1f-smooth((t-.32f)/.68f);
+        float r=dp(22)+dp(106)*easeOut(t);
+        color(Color.argb(opacity(a*.45f),226,247,255));
+        paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(3.2f));
+        canvas.drawCircle(x,top,r,paint);
+        float draw=smooth(t/.65f);
+        color(Color.argb(opacity(smooth(t/.25f)),255,255,255));
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(dp(3.6f));
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        path.reset();path.moveTo(x-dp(12),top+dp(1));
+        path.lineTo(x-dp(12)+dp(10)*Math.min(1f,draw*2f),top+dp(1)+dp(9)*Math.min(1f,draw*2f));
+        if (draw>.5f)path.lineTo(x-dp(2)+dp(22)*(draw-.5f)*2f,top+dp(10)-dp(27)*(draw-.5f)*2f);
+        canvas.drawPath(path,paint);
     }
-    private void text(Canvas c,String source,float x,float y,float size,int color,boolean semibold,float maxWidth) {
-        fill(color);
-        p.setTypeface(Typeface.create(semibold?"sans-serif-medium":"sans-serif",Typeface.NORMAL));
-        p.setTextSize(dp(size));p.setTextAlign(Paint.Align.CENTER);
-        String s=source==null?"":source;
-        if(p.measureText(s)>maxWidth) {
-            int len=s.length();
-            while(len>1&&p.measureText(s.substring(0,len)+"…")>maxWidth)len--;
-            s=s.substring(0,len)+"…";
+
+    private void drawStatusCapsule(Canvas canvas,float w,float h,float mid) {
+        float width=Math.min(w-dp(34),dp(363));
+        float height=dp(113);
+        float y = Math.max(dp(158),h*.68f);
+        float opacity=reveal;
+        if (mode == Mode.SEND) opacity=1f-smooth((phase-.10f)/.33f);
+        if (mode == Mode.RECEIVE) opacity=smooth((phase-.56f)/.31f);
+        if (mode == Mode.SENT || mode == Mode.RECEIVED) opacity=smooth(phase/.28f);
+        if (opacity<.006f) return;
+        float translate=dp(12)*(1f-opacity);
+        card.set(mid-width*.5f,y+translate,mid+width*.5f,y+height+translate);
+        float radius=dp(28);
+        // The capsule is physical glass: mostly opaque, thin white rim, cool shadow.
+        color(Color.argb(opacity(opacity*.23f),14,33,69));
+        paint.setShadowLayer(dp(26),0,dp(12),Color.argb(opacity(opacity*.33f),4,26,62));
+        canvas.drawRoundRect(card,radius,radius,paint);paint.clearShadowLayer();
+        gradient(new LinearGradient(card.left,card.top,card.right,card.bottom,
+                new int[]{Color.argb(opacity(opacity*.97f),255,255,255),
+                        Color.argb(opacity(opacity*.91f),235,243,253),
+                        Color.argb(opacity(opacity*.97f),245,250,255)},
+                new float[]{0f,.59f,1f},Shader.TileMode.CLAMP));
+        canvas.drawRoundRect(card,radius,radius,paint);paint.setShader(null);
+        color(Color.argb(opacity(opacity*.9f),255,255,255));
+        paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1.1f));
+        canvas.drawRoundRect(card,radius,radius,paint);
+        // A restrained specular arc, like light grazing polished glass.
+        path.reset();path.moveTo(card.left+dp(24),card.top+dp(8));
+        path.cubicTo(mid-dp(45),card.top+dp(2),mid+dp(41),card.top+dp(3),card.right-dp(23),card.top+dp(9));
+        color(Color.argb(opacity(opacity*.72f),255,255,255));
+        paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1.8f));
+        canvas.drawPath(path,paint);
+
+        float lx=card.left+dp(48), cy=card.top+height*.5f;
+        icon.set(lx-dp(23),cy-dp(24),lx+dp(23),cy+dp(24));
+        gradient(new LinearGradient(icon.left,icon.top,icon.right,icon.bottom,
+                Color.rgb(248,252,255),Color.rgb(216,233,252),Shader.TileMode.CLAMP));
+        canvas.drawRoundRect(icon,dp(13),dp(13),paint);paint.setShader(null);
+        color(Color.rgb(71,142,244));
+        paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1));
+        canvas.drawRoundRect(icon,dp(13),dp(13),paint);
+        label(canvas,typeLabel(),lx,cy+dp(4),10,ACCENT,true,dp(40),Paint.Align.CENTER);
+
+        float textX=card.left+dp(89);
+        String title;
+        String detail;
+        switch (mode) {
+            case PREPARING: title="A preparar";detail=filename;break;
+            case WAIT: title="Pronto a partilhar";detail=filename;break;
+            case SEND: title="A enviar";detail=filename;break;
+            case RECEIVE: title="A receber";detail=filename;break;
+            case SENT: title="Enviado";detail=filename;break;
+            case RECEIVED: title="Recebido";detail=filename;break;
+            default: title="Falha na transferência";detail=errorText;
         }
-        p.setAlpha(alpha(255,reveal));c.drawText(s,x,y,p);p.setAlpha(255);
+        float remaining=card.right-dp(18)-textX;
+        label(canvas,title,textX,card.top+dp(47),16,INK,true,remaining,Paint.Align.LEFT);
+        label(canvas,detail,textX,card.top+dp(72),12,SECONDARY,false,remaining,Paint.Align.LEFT);
+        if (mode == Mode.WAIT && !subtitle.isEmpty()) {
+            label(canvas,subtitle,mid,card.bottom+dp(27),11,Color.argb(opacity(opacity),244,250,255),false,w-dp(36),Paint.Align.CENTER);
+        }
+    }
+
+    private String typeLabel() {
+        String ext=filename.toLowerCase(java.util.Locale.ROOT);
+        if(ext.endsWith(".pdf")) return "PDF";
+        if(ext.endsWith(".apk")) return "APK";
+        if(ext.endsWith(".jpg")||ext.endsWith(".jpeg")||ext.endsWith(".png")||ext.endsWith(".webp"))return "IMG";
+        if(ext.endsWith(".mp4")||ext.endsWith(".mov"))return "VID";
+        return "DOC";
+    }
+    private void label(Canvas canvas,String value,float x,float y,float size,int color,boolean semibold,float maxWidth,Paint.Align align) {
+        color(color);
+        paint.setTypeface(Typeface.create(semibold?"sans-serif-medium":"sans-serif",Typeface.NORMAL));
+        paint.setTextSize(dp(size));
+        paint.setTextAlign(align);
+        String text=value==null?"":value;
+        if (paint.measureText(text)>maxWidth) {
+            int end=text.length();
+            while(end>1&&paint.measureText(text.substring(0,end)+"…")>maxWidth)end--;
+            text=text.substring(0,end)+"…";
+        }
+        canvas.drawText(text,x,y,paint);
     }
 }

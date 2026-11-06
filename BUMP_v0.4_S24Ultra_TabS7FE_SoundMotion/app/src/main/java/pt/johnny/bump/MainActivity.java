@@ -14,6 +14,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ImageView;
 import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.SeekBar;
@@ -26,10 +27,10 @@ import org.json.JSONObject;
 
 public final class MainActivity extends Activity {
     private static WeakReference<MainActivity> resumed = new WeakReference<>(null);
-    private static final int BG = Color.rgb(239, 246, 255);
-    private static final int INK = Color.rgb(17, 42, 77);
-    private static final int MUTED = Color.rgb(102, 124, 157);
-    private static final int BLUE = Color.rgb(35, 115, 247);
+    private static final int BG = Color.rgb(245, 248, 253);
+    private static final int INK = Color.rgb(30, 43, 65);
+    private static final int MUTED = Color.rgb(99, 116, 141);
+    private static final int BLUE = Color.rgb(37, 123, 248);
     private LinearLayout body, historyPanel;
     private TextView status;
     private Button toggle;
@@ -87,10 +88,14 @@ public final class MainActivity extends Activity {
         body.setPadding(dp(22), dp(32), dp(22), dp(50));
         scroll.addView(body);
         setContentView(scroll);
-        add(body, text("B.", 54, BLUE, true), 0);
-        add(body, text("BUMP", 27, INK, true), 0);
-        add(body, text("Partilha como se fosse magia.", 15, MUTED, false), 5);
-        add(body, text("LIQUID GLASS  ·  BLUE EDITION", 10, BLUE, true), 13);
+        ImageView emblem = new ImageView(this);
+        emblem.setImageResource(R.drawable.ic_bump);
+        LinearLayout.LayoutParams emblemParams = new LinearLayout.LayoutParams(dp(62),dp(62));
+        emblemParams.bottomMargin = dp(14);
+        body.addView(emblem,emblemParams);
+        add(body, text("BUMP", 32, INK, true), 0);
+        add(body, text("A partilha acontece aqui.", 15, MUTED, false), 5);
+        add(body, text("SURFACE HANDOFF  ·  WAVE SYSTEM", 10, BLUE, true), 13);
         LinearLayout primary = card();
         add(primary, text("Este dispositivo", 18, INK, true), 0);
         add(primary, text(Build.MODEL + "  ·  " + Prefs.localId(this), 12, MUTED, false), 8);
@@ -104,7 +109,7 @@ public final class MainActivity extends Activity {
         add(primary, text("Quando a receção está ativa, o Android pode mostrar um indicador discreto de serviço em segundo plano.", 12, MUTED, false), 12);
 
         LinearLayout settings = card();
-        add(settings, text("A experiência invisível", 18, INK, true), 0);
+        add(settings, text("A experiência por proximidade", 18, INK, true), 0);
         add(settings, text("Autoriza a sobreposição para ver a animação do documento a entrar, por cima das outras aplicações.", 13, MUTED, false), 8);
         Button overlay = button("Permitir animações sobre outras apps", Color.rgb(236, 243, 255));
         LinearLayout.LayoutParams overlayLp = new LinearLayout.LayoutParams(-1, dp(52));
@@ -146,7 +151,7 @@ public final class MainActivity extends Activity {
 
         LinearLayout sound = card();
         add(sound, text("Som e movimento", 18, INK, true), 0);
-        add(sound, text("Sinais sonoros originais para cada momento: pronto, envio, chegada e confirmação. Os dois Galaxy usam a mesma linguagem visual e sonora.", 13, MUTED, false), 8);
+        add(sound, text("Sinais sonoros originais para cada momento: pronto, envio, chegada e confirmação. Os dois Galaxy partilham uma única onda luminosa.", 13, MUTED, false), 8);
         Switch soundToggle = new Switch(this);
         soundToggle.setText("Efeitos sonoros");
         soundToggle.setTextColor(INK);

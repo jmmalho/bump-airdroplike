@@ -1,5 +1,17 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="96dp" android:height="96dp" android:viewportWidth="96" android:viewportHeight="96">
-  <path android:fillColor="#267DFF" android:pathData="M16,4h64a12,12 0,0 1,12 12v64a12,12 0,0 1,-12 12h-64a12,12 0,0 1,-12 -12v-64a12,12 0,0 1,12 -12z"/>
-  <path android:fillColor="#FFFFFFFF" android:pathData="M30,22h19c18,0 23,20 11,27c17,8 9,27 -8,27H30zM42,32v14h7c10,0 11,-14 0,-14zM42,55v12h9c10,0 10,-12 0,-12z"/>
+    android:width="96dp" android:height="96dp"
+    android:viewportWidth="96" android:viewportHeight="96">
+    <!-- Original Surface Handoff icon: a lens and two travelling optical fronts. -->
+    <path android:fillColor="#267BFF"
+        android:pathData="M20,4 L76,4 Q92,4 92,20 L92,76 Q92,92 76,92 L20,92 Q4,92 4,76 L4,20 Q4,4 20,4 Z"/>
+    <path android:strokeColor="#DAEEFF" android:strokeWidth="5"
+        android:strokeLineCap="round" android:fillColor="@android:color/transparent"
+        android:pathData="M23,24 C37,17 59,17 73,24"/>
+    <path android:strokeColor="#F7FCFF" android:strokeWidth="4"
+        android:strokeLineCap="round" android:fillColor="@android:color/transparent"
+        android:pathData="M16,38 C35,29 61,29 80,38"/>
+    <path android:strokeColor="#A7DBFF" android:strokeWidth="3"
+        android:strokeLineCap="round" android:fillColor="@android:color/transparent"
+        android:pathData="M17,57 C33,68 63,68 79,57"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M48,40 A8,8 0,1 1,48 56 A8,8 0,1 1,48 40 Z"/>
 </vector>

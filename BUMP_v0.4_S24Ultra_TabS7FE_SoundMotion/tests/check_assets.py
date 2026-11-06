@@ -33,7 +33,7 @@ pulse = (SRC / 'PulseView.java').read_text()
 for mode in ['WAIT', 'SEND', 'RECEIVE', 'SENT', 'RECEIVED', 'ERROR']:
     assert mode in pulse
 ET.parse(ROOT / 'app/src/main/AndroidManifest.xml')
-assert 'versionCode 8' in (ROOT / 'app/build.gradle').read_text()
+assert 'versionCode 9' in (ROOT / 'app/build.gradle').read_text()
 assert 'BUMP' in (ROOT / 'README.md').read_text()
 print('PASS Audio resources / event wiring / AndroidManifest XML: 6 WAV + 5 event cues')
 
@@ -41,7 +41,7 @@ print('PASS Audio resources / event wiring / AndroidManifest XML: 6 WAV + 5 even
 glass = (SRC / 'GlassStyle.java').read_text()
 assert 'setBlurBehindRadius' in glass and 'isCrossWindowBlurEnabled' in glass
 assert 'GradientDrawable' in glass and 'PowerManager' in glass
-assert 'drawGlass' in pulse and 'drawBreathingRings' in pulse and 'drawHandoff' in pulse
+assert 'drawEdgeLight' in pulse and 'drawRefractionFront' in pulse and 'drawStatusCapsule' in pulse
 for activity in ['ShareActivity.java', 'PreviewActivity.java']:
     assert 'GlassStyle.prepareTranslucentActivity(this)' in (SRC / activity).read_text()
 assert 'params.alpha = .78f' in receiver
@@ -50,11 +50,11 @@ ET.parse(ROOT / 'app/src/main/res/values/styles.xml')
 print('PASS Liquid Glass materials / optional system blur / fallback / theme XML')
 
 # Wave v0.5: both directions, real completion gating, and complete live preview.
-assert 'drawWaveLine' in pulse and 'drawConfirmation' in pulse
+assert 'drawRefractionFront' in pulse and 'drawCompletion' in pulse
 assert 'ValueAnimator.areAnimatorsEnabled()' in pulse  # respects system accessibility settings
-assert 'long launchStartedAt' in share and '980 - elapsed' in share
-assert 'long waveStartedAt' in receiver and '960 - elapsed' in receiver
-assert 'Ver sequência AirDrop Wave' in preview and 'playDemo()' in preview
+assert 'long launchStartedAt' in share and '1480 - elapsed' in share
+assert 'long waveStartedAt' in receiver and '1480 - elapsed' in receiver
+assert 'Ver Surface Handoff' in preview and 'playDemo()' in preview
 print('PASS AirDrop Wave choreography / completion timing / demo / reduced motion')
 
 # v0.5.1: smart file opening is only possible after an explicit tap.
@@ -70,5 +70,16 @@ assert 'OpenFileActivity.intent' in (SRC / 'MainActivity.java').read_text()
 assert 'OpenFileActivity.intent' in receiver
 assert receiver.count('private void showOpenAction(') == 1
 assert 'RuntimeShader' in shader and 'createRuntimeShaderEffect' in shader
-assert 'LiquidRefraction liquid' in pulse
+assert 'LiquidRefraction refraction' in pulse
 print('PASS Smart open PDF/image/APK / safe user tap / AGSL 33+ fallback')
+
+# Surface Handoff: original icon, refractive AGSL, and honest Android overlay policy.
+icon = (ROOT / 'app/src/main/res/drawable/ic_bump.xml').read_text()
+ET.parse(ROOT / 'app/src/main/res/drawable/ic_bump.xml')
+assert 'content.eval(sampleAt)' in shader
+assert 'originY' in shader and 'setFloatUniform' in shader
+assert 'typeLabel()' in pulse
+assert 'Math.max(0, 1480 - elapsed)' in receiver
+assert 'params.alpha = .78f' in receiver
+assert 'SURFACE HANDOFF' in (SRC/'MainActivity.java').read_text()
+print('PASS Surface Handoff visuals / original icon / correct timing / pass-through overlay')

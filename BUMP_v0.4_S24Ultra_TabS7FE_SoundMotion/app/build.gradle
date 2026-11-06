@@ -7,8 +7,8 @@ android {
         applicationId 'pt.johnny.bump'
         minSdk 26
         targetSdk 35
-        versionCode 8
-        versionName '0.5.1-open-beta'
+        versionCode 9
+        versionName '0.6.0-surface-beta'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

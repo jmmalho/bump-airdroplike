@@ -16,9 +16,9 @@ import android.view.WindowManager;
  * deliberately self-sufficient when blur is off (battery saver, developer settings or GPU).
  */
 final class GlassStyle {
-    static final int INK = Color.rgb(22, 51, 88);
-    static final int MUTED = Color.rgb(94, 122, 155);
-    static final int BLUE = Color.rgb(37, 119, 250);
+    static final int INK = Color.rgb(30, 43, 65);
+    static final int MUTED = Color.rgb(100, 115, 139);
+    static final int BLUE = Color.rgb(37, 123, 248);
     static final int SOFT = Color.rgb(233, 243, 255);
 
     private GlassStyle() { }
@@ -29,9 +29,9 @@ final class GlassStyle {
 
     static GradientDrawable panel(Context context, float radius) {
         GradientDrawable result = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                new int[]{Color.argb(247, 255, 255, 255),
-                        Color.argb(229, 233, 246, 255),
-                        Color.argb(241, 250, 253, 255)});
+                new int[]{Color.argb(253, 255, 255, 255),
+                        Color.argb(241, 240, 247, 255),
+                        Color.argb(248, 252, 254, 255)});
         result.setCornerRadius(dp(context, radius));
         result.setStroke(dp(context, 1), Color.argb(225, 255, 255, 255));
         return result;
@@ -55,7 +55,7 @@ final class GlassStyle {
 
     static GradientDrawable background(Context context) {
         return new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                new int[]{Color.rgb(232, 242, 255), Color.rgb(250, 252, 255), Color.rgb(220, 235, 254)});
+                new int[]{Color.rgb(238, 244, 253), Color.rgb(251, 253, 255), Color.rgb(236, 245, 255)});
     }
 
     /** Foreground activity only: system blur is optional; the glass panel is always readable. */
@@ -65,10 +65,10 @@ final class GlassStyle {
         window.setNavigationBarColor(Color.TRANSPARENT);
         window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
         WindowManager.LayoutParams params = window.getAttributes();
-        params.dimAmount = .14f;
+        params.dimAmount = .095f;
         if (Build.VERSION.SDK_INT >= 31 && canBlur(activity)) {
             window.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND);
-            params.setBlurBehindRadius(dp(activity, 17));
+            params.setBlurBehindRadius(dp(activity, 20));
         }
         window.setAttributes(params);
         window.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
