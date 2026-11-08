@@ -11,7 +11,7 @@ import android.os.VibratorManager
 import pt.johnny.bump.R
 import pt.johnny.bump.data.AppSettings
 
-enum class Cue { READY, SEND, INCOMING, SENT, RECEIVED, ERROR, BUMP }
+enum class Cue { BUMP, SENT, RECEIVED, ERROR }
 
 /**
  * Low-latency sound + haptics. SoundPool keeps the six cues decoded in memory,
@@ -29,10 +29,7 @@ class Feedback(private val context: Context, private val settings: AppSettings) 
         ).build()
 
     private val ids = mapOf(
-        Cue.READY to pool.load(context, R.raw.bump_ready, 1),
-        Cue.SEND to pool.load(context, R.raw.bump_send, 1),
         Cue.BUMP to pool.load(context, R.raw.bump_send, 1),
-        Cue.INCOMING to pool.load(context, R.raw.bump_incoming, 1),
         Cue.SENT to pool.load(context, R.raw.bump_sent, 1),
         Cue.RECEIVED to pool.load(context, R.raw.bump_received, 1),
         Cue.ERROR to pool.load(context, R.raw.bump_error, 1),
@@ -42,13 +39,19 @@ class Feedback(private val context: Context, private val settings: AppSettings) 
         if (Build.VERSION.SDK_INT >= 31) context.getSystemService(VibratorManager::class.java)?.defaultVibrator
         else @Suppress("DEPRECATION") context.getSystemService(Vibrator::class.java)
 
+    companion object {
+        /** bump_send.ogg is a swell that peaks 300 ms in: start it this early so the peak lands on the release. */
+        const val RELEASE_SOUND_LEAD_SECONDS = 0.30f
+    }
+
     fun play(cue: Cue) {
         val s = settings.current
         if (s.sounds) {
             val audio = context.getSystemService(AudioManager::class.java)
             // Respect silent/vibrate mode even if media volume is up.
             if (audio == null || audio.ringerMode == AudioManager.RINGER_MODE_NORMAL) {
-                val volume = if (cue == Cue.RECEIVED) .7f else .55f
+                // All files are peak-normalised to -3 dBFS; these set the mix.
+                val volume = when (cue) { Cue.BUMP -> .9f; Cue.RECEIVED, Cue.SENT -> .7f; Cue.ERROR -> .6f }
                 ids[cue]?.let { pool.play(it, volume, volume, 1, 0, 1f) }
             }
         }
@@ -92,9 +95,7 @@ class Feedback(private val context: Context, private val settings: AppSettings) 
             if (Build.VERSION.SDK_INT >= 31 && richSupported(v)) {
                 val c = VibrationEffect.startComposition()
                 when (cue) {
-                    Cue.READY -> c.addPrimitive(VibrationEffect.Composition.PRIMITIVE_TICK, .5f)
-                    Cue.BUMP, Cue.SEND -> c.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 1f)
-                    Cue.INCOMING -> c.addPrimitive(VibrationEffect.Composition.PRIMITIVE_QUICK_RISE, .6f)
+                    Cue.BUMP -> return // the charge waveform already ends with the release tick
                     Cue.SENT, Cue.RECEIVED -> c.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, .7f)
                         .addPrimitive(VibrationEffect.Composition.PRIMITIVE_TICK, 1f, 70)
                     Cue.ERROR -> c.addPrimitive(VibrationEffect.Composition.PRIMITIVE_THUD, .8f)
@@ -103,9 +104,7 @@ class Feedback(private val context: Context, private val settings: AppSettings) 
                 return
             }
             val pattern = when (cue) {
-                Cue.READY -> longArrayOf(0, 12)
-                Cue.BUMP, Cue.SEND -> longArrayOf(0, 22)
-                Cue.INCOMING -> longArrayOf(0, 14)
+                Cue.BUMP -> return
                 Cue.SENT, Cue.RECEIVED -> longArrayOf(0, 15, 70, 20)
                 Cue.ERROR -> longArrayOf(0, 30, 60, 30)
             }
@@ -117,6 +116,5 @@ class Feedback(private val context: Context, private val settings: AppSettings) 
         VibrationEffect.Composition.PRIMITIVE_CLICK,
         VibrationEffect.Composition.PRIMITIVE_TICK,
         VibrationEffect.Composition.PRIMITIVE_THUD,
-        VibrationEffect.Composition.PRIMITIVE_QUICK_RISE,
     )
 }

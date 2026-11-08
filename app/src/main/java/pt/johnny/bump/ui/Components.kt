@@ -8,6 +8,12 @@ import android.util.Size
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.composed
+import androidx.compose.ui.graphics.graphicsLayer
+import pt.johnny.bump.ui.theme.Motion
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -111,7 +117,7 @@ fun BumpIllustration(modifier: Modifier = Modifier, accent: Color = MaterialThem
         val w = size.width; val h = size.height
         // approach 0..0.35, contact 0.35..0.55, rest after
         val approach = (t / .35f).coerceIn(0f, 1f)
-        val eased = 1f - (1f - approach) * (1f - approach) * (1f - approach)
+        val eased = Motion.easeOut(approach)
         val gap = (1f - eased) * h * .16f
         val contact = if (t in .33f..0.75f) sin(((t - .33f) / .42f) * PI).toFloat() else 0f
         val pw = w * .26f; val ph = h * .44f
@@ -209,6 +215,17 @@ fun Banner(icon: ImageVector, title: String, body: String, actionLabel: String, 
             TextButton(onClick = onAction) { Text(actionLabel) }
         }
     }
+}
+
+/** Apple-like press: shrinks quickly while held, springs back with a little bounce on release. */
+fun Modifier.pressScale(interaction: MutableInteractionSource, pressed: Float = 0.95f): Modifier = composed {
+    val isPressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        if (isPressed) pressed else 1f,
+        if (isPressed) Motion.spring(0.25f, 1f) else Motion.bouncy(),
+        label = "press",
+    )
+    graphicsLayer { scaleX = scale; scaleY = scale }
 }
 
 fun relativeTime(time: Long): String =

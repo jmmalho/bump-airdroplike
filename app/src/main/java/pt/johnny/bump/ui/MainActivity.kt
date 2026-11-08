@@ -5,6 +5,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -33,6 +40,7 @@ import pt.johnny.bump.ui.screens.HomeScreen
 import pt.johnny.bump.ui.screens.OnboardingScreen
 import pt.johnny.bump.ui.screens.SettingsScreen
 import pt.johnny.bump.ui.theme.BumpTheme
+import pt.johnny.bump.ui.theme.Motion
 
 enum class Screen { HOME, HISTORY, SETTINGS, DEMO }
 
@@ -64,11 +72,21 @@ private fun BumpRoot() {
     }
 
     BackHandler(enabled = screen != Screen.HOME) { screen = Screen.HOME }
-    when (screen) {
-        Screen.HOME -> HomeScreen(onOpen = { screen = it })
-        Screen.HISTORY -> HistoryScreen(onBack = { screen = Screen.HOME })
-        Screen.SETTINGS -> SettingsScreen(onBack = { screen = Screen.HOME }, onDemo = { screen = Screen.DEMO })
-        Screen.DEMO -> DemoScreen(onBack = { screen = Screen.SETTINGS })
+    AnimatedContent(
+        targetState = screen,
+        transitionSpec = {
+            val forward = targetState.ordinal > initialState.ordinal
+            (slideInHorizontally(Motion.snappy()) { w -> if (forward) w / 3 else -w / 3 } + fadeIn(tween(240, easing = Motion.EaseOut))) togetherWith
+                (slideOutHorizontally(Motion.snappy()) { w -> if (forward) -w / 6 else w / 6 } + fadeOut(tween(160, easing = Motion.EaseOut)))
+        },
+        label = "screen",
+    ) { target ->
+        when (target) {
+            Screen.HOME -> HomeScreen(onOpen = { screen = it })
+            Screen.HISTORY -> HistoryScreen(onBack = { screen = Screen.HOME })
+            Screen.SETTINGS -> SettingsScreen(onBack = { screen = Screen.HOME }, onDemo = { screen = Screen.DEMO })
+            Screen.DEMO -> DemoScreen(onBack = { screen = Screen.SETTINGS })
+        }
     }
     PairingDialog()
 }

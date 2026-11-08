@@ -316,7 +316,7 @@ class ReceiverService : Service(), NearbyLink.Listener {
             this.params = params
             setFile(armedName, armedMime)
             setHeadline("A receber", "De ${peerName ?: "outro dispositivo"}")
-            onChargeComplete = { app.feedback.play(Cue.BUMP) }
+            onReleaseCue = { app.feedback.play(Cue.BUMP) }
             // Once the choreography is over, a tap anywhere dismisses (a long transfer keeps going).
             setOnClickListener { if (!isRunning) hideOverlay() }
         }
@@ -330,7 +330,6 @@ class ReceiverService : Service(), NearbyLink.Listener {
             gravity = Gravity.TOP or Gravity.START
             if (Build.VERSION.SDK_INT >= 28) layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             if (Build.VERSION.SDK_INT >= 30) fitInsetsTypes = 0
-            windowAnimations = android.R.style.Animation_Toast
         }
         try {
             windowManager?.addView(view, params2)
@@ -342,8 +341,12 @@ class ReceiverService : Service(), NearbyLink.Listener {
 
     private fun hideOverlay() {
         main.removeCallbacks(removeOverlay)
-        overlay?.let { runCatching { windowManager?.removeView(it) } }
+        val v = overlay ?: return
         overlay = null
+        // Leave with a quick ease-out fade instead of vanishing.
+        v.isClickable = false
+        v.animate().alpha(0f).setDuration(200).setInterpolator(pt.johnny.bump.ui.theme.Motion.easeOutInterpolator())
+            .withEndAction { runCatching { windowManager?.removeView(v) } }.start()
     }
 
     override fun onDestroy() {

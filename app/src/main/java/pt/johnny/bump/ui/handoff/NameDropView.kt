@@ -25,7 +25,6 @@ import android.os.Build
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
-import android.view.animation.PathInterpolator
 import android.widget.FrameLayout
 import android.widget.TextView
 import pt.johnny.bump.data.Files
@@ -112,6 +111,9 @@ class NameDropView(context: Context) : FrameLayout(context) {
 
     var params: RippleParams = RippleParams.load(context)
     var onChargeComplete: (() -> Unit)? = null
+    /** Fires [releaseCueLead] seconds before the release, so a swelling sound peaks exactly on it. */
+    var onReleaseCue: (() -> Unit)? = null
+    var releaseCueLead: Float = pt.johnny.bump.feedback.Feedback.RELEASE_SOUND_LEAD_SECONDS
     var onFinished: (() -> Unit)? = null
 
     private val overscan = dp(60f)
@@ -177,7 +179,10 @@ class NameDropView(context: Context) : FrameLayout(context) {
             action.setOnClickListener { onAction() }
             action.alpha = 0f
             action.visibility = VISIBLE
-            action.animate().alpha(1f).setDuration(260).setStartDelay(180).start()
+            val baseY = card.actionTop() - action.top
+            action.translationY = baseY + dp(14f)
+            action.animate().alpha(1f).translationY(baseY).setDuration(520).setStartDelay(120)
+                .setInterpolator(pt.johnny.bump.ui.theme.Motion.easeOutInterpolator()).start()
         }
     }
 
@@ -204,8 +209,11 @@ class NameDropView(context: Context) : FrameLayout(context) {
         cardRevealAt = p.chargeSeconds + p.rippleSeconds * 0.30f
         running = true
         var released = false
+        var cued = false
+        alpha = 0f
+        animate().alpha(1f).setDuration(220).setInterpolator(pt.johnny.bump.ui.theme.Motion.easeOutInterpolator()).start()
         if (!ValueAnimator.areAnimatorsEnabled()) {
-            onChargeComplete?.invoke(); card.reveal = 1f; card.invalidate(); running = false; onFinished?.invoke(); return
+            onReleaseCue?.invoke(); onChargeComplete?.invoke(); card.reveal = 1f; card.invalidate(); running = false; onFinished?.invoke(); return
         }
         timeline = ValueAnimator.ofFloat(0f, p.totalSeconds).apply {
             duration = (p.totalSeconds * 1000).toLong()
@@ -213,6 +221,7 @@ class NameDropView(context: Context) : FrameLayout(context) {
             addUpdateListener {
                 val t = it.animatedValue as Float
                 frame(t, p)
+                if (!cued && t >= max(0f, p.chargeSeconds - releaseCueLead)) { cued = true; onReleaseCue?.invoke() }
                 if (!released && t >= p.chargeSeconds) { released = true; onChargeComplete?.invoke() }
             }
             addListener(object : android.animation.AnimatorListenerAdapter() {
@@ -248,8 +257,8 @@ class NameDropView(context: Context) : FrameLayout(context) {
         glow.diameter = width * 1.1f * p.glowSize * scale
         glow.invalidate()
         applyRipple(radius, p)
-        // Card rises in behind the wavefront.
-        val r = ((t - cardRevealAt) / 0.55f).coerceIn(0f, 1f)
+        // Card rises in behind the wavefront (spring-driven inside CardView).
+        val r = ((t - cardRevealAt) / CardView.REVEAL_SECONDS).coerceIn(0f, 1f)
         if (r != card.reveal) { card.reveal = r; card.invalidate() }
         // Fallback for devices without RuntimeShader: draw the wavefront as light.
         if (shader == null) { stage.fallbackRadius = radius; stage.params = p; stage.invalidate() }
@@ -383,6 +392,7 @@ class NameDropView(context: Context) : FrameLayout(context) {
     // ---------------------------------------------------------------- file card
 
     private class CardView(context: Context) : View(context) {
+        companion object { const val REVEAL_SECONDS = 1.1f }
         enum class State { PROGRESS, DONE, ERROR }
         var state = State.PROGRESS
         var reveal = 0f
@@ -397,7 +407,6 @@ class NameDropView(context: Context) : FrameLayout(context) {
         private val text = Paint(Paint.ANTI_ALIAS_FLAG)
         private val rect = RectF()
         private val path = Path()
-        private val ease = PathInterpolator(0.2f, 0f, 0f, 1f)
         private val medium = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         private val regular = Typeface.create("sans-serif", Typeface.NORMAL)
 
@@ -412,12 +421,16 @@ class NameDropView(context: Context) : FrameLayout(context) {
         fun actionTop(): Float = cardRect().bottom + dp(20f)
 
         override fun onDraw(c: Canvas) {
-            val r = ease.getInterpolation(reveal.coerceIn(0f, 1f))
+            if (reveal <= 0f) return
+            val secs = reveal.coerceIn(0f, 1f) * REVEAL_SECONDS
+            // Position and scale ride a slightly bouncy spring; opacity uses the long ease-out (never overshoots).
+            val m = pt.johnny.bump.ui.theme.Motion.springStep(secs, response = 0.55f, dampingFraction = 0.74f)
+            val r = pt.johnny.bump.ui.theme.Motion.easeOut(secs / 0.35f)
             if (r <= 0.001f) return
             val box = cardRect()
             c.save()
-            c.translate(0f, (1 - r) * dp(36f))
-            c.scale(.92f + .08f * r, .92f + .08f * r, box.centerX(), box.centerY())
+            c.translate(0f, (1 - m) * dp(44f))
+            c.scale(.9f + .1f * m, .9f + .1f * m, box.centerX(), box.centerY())
             val alpha = (r * 255).toInt()
 
             paint.setShadowLayer(dp(30f), 0f, dp(14f), Color.argb((alpha * .35f).toInt(), 0, 0, 0))
@@ -458,7 +471,8 @@ class NameDropView(context: Context) : FrameLayout(context) {
                     paint.color = withAlpha(Palette.ACCENT, r); c.drawPath(seg, paint)
                 }
                 State.DONE -> {
-                    val k = ((System.nanoTime() - doneAt) / 450_000_000f).coerceIn(0f, 1f)
+                    val raw = ((System.nanoTime() - doneAt) / 550_000_000f).coerceIn(0f, 1f)
+                    val k = pt.johnny.bump.ui.theme.Motion.easeOut(raw)
                     paint.color = withAlpha(Palette.SUCCESS, r); c.drawRoundRect(ring, dp(32f), dp(32f), paint)
                     val cx = rect.right - dp(4f); val cy = rect.bottom - dp(4f)
                     paint.style = Paint.Style.FILL; c.drawCircle(cx, cy, dp(17f), paint)
@@ -467,7 +481,7 @@ class NameDropView(context: Context) : FrameLayout(context) {
                     val a1 = min(1f, k * 2); path.lineTo(cx - dp(7f) + dp(5f) * a1, cy + dp(5f) * a1)
                     if (k > .5f) { val a2 = (k - .5f) * 2; path.lineTo(cx - dp(2f) + dp(10f) * a2, cy + dp(5f) - dp(11f) * a2) }
                     c.drawPath(path, paint)
-                    if (k < 1f) postInvalidateOnAnimation()
+                    if (raw < 1f) postInvalidateOnAnimation()
                 }
                 State.ERROR -> { paint.color = withAlpha(Palette.DANGER, r); c.drawRoundRect(ring, dp(32f), dp(32f), paint) }
             }

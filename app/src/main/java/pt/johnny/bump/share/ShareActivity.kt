@@ -20,6 +20,20 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntOffset
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
+import pt.johnny.bump.ui.pressScale
+import pt.johnny.bump.ui.theme.Motion
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -117,14 +131,47 @@ private fun ShareSheet(vm: ShareViewModel, onClose: () -> Unit) {
 
     val handoff = s.waveTick > 0 // the bump happened: NameDrop takes over the whole screen
 
+    // Sheet physics: springs in, follows the finger, and leaves with the finger's velocity.
+    val scope = rememberCoroutineScope()
+    val offset = remember { Animatable(3000f) }
+    var sheetHeight by remember { mutableFloatStateOf(0f) }
+    var leaving by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { offset.animateTo(0f, Motion.snappy()) }
+    fun dismiss(velocity: Float = 0f) {
+        if (leaving) return
+        leaving = true
+        scope.launch {
+            offset.animateTo(maxOf(sheetHeight, 1200f), Motion.spring(0.32f, 1f), initialVelocity = velocity)
+            onClose()
+        }
+    }
+    val drag = rememberDraggableState { delta ->
+        scope.launch {
+            val next = offset.value + delta
+            // Rubber band when pulled upward past rest.
+            offset.snapTo(if (next < 0f) offset.value + delta * 0.18f else next)
+        }
+    }
+
     Box(Modifier.fillMaxSize()) {
         if (!handoff) {
+            val shown = if (sheetHeight > 0f) (1f - offset.value / sheetHeight).coerceIn(0f, 1f) else 0f
             Box(
-                Modifier.fillMaxSize().background(Color.Black.copy(alpha = .38f))
-                    .clickable(remember { MutableInteractionSource() }, null) { onClose() },
+                Modifier.fillMaxSize().background(Color.Black.copy(alpha = .38f * shown))
+                    .clickable(remember { MutableInteractionSource() }, null) { dismiss() },
             )
             Surface(
                 Modifier.align(Alignment.BottomCenter).widthIn(max = 560.dp).fillMaxWidth()
+                    .onSizeChanged { sheetHeight = it.height.toFloat() }
+                    .offset { IntOffset(0, offset.value.roundToInt()) }
+                    .draggable(
+                        state = drag,
+                        orientation = Orientation.Vertical,
+                        onDragStopped = { velocity ->
+                            if (offset.value > sheetHeight * 0.28f || velocity > 1600f) dismiss(velocity)
+                            else offset.animateTo(0f, Motion.bouncy(), initialVelocity = velocity)
+                        },
+                    )
                     .clickable(remember { MutableInteractionSource() }, null) { },
                 shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
                 color = MaterialTheme.colorScheme.surface,
@@ -132,7 +179,7 @@ private fun ShareSheet(vm: ShareViewModel, onClose: () -> Unit) {
             ) {
                 Column(Modifier.navigationBarsPadding().padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 12.dp)) {
                     Box(Modifier.align(Alignment.CenterHorizontally).size(36.dp, 4.dp).background(MaterialTheme.colorScheme.outlineVariant, CircleShape))
-                    FileHeader(s, onClose)
+                    FileHeader(s) { dismiss() }
                     Spacer(Modifier.height(8.dp))
                     when (s.phase) {
                         Phase.PREPARING -> Center { CircularProgressIndicator(Modifier.size(28.dp)); Caption("A preparar o ficheiro…") }
@@ -247,7 +294,8 @@ private fun BumpPrompt(s: ShareState, vm: ShareViewModel) {
             )
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                 items(fresh, key = { it.endpointId }) { d ->
-                    Box(Modifier.clickable { vm.tapDevice(d) }.padding(4.dp)) {
+                    val press = remember { MutableInteractionSource() }
+                    Box(Modifier.pressScale(press).clickable(interactionSource = press, indication = null) { vm.tapDevice(d) }.padding(4.dp)) {
                         DeviceAvatar(d.name, d.tablet, size = 54.dp, badge = { ChipBadge() })
                     }
                 }

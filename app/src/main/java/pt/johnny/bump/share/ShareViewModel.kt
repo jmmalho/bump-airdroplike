@@ -203,7 +203,8 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
         l.send(Msg.Go(reason))
         // Charge hum now, release tick + sound when the ripple bursts (same timeline as the receiver).
         app.feedback.playCharge(ripple.chargeSeconds)
-        main.postDelayed({ app.feedback.play(Cue.BUMP) }, (ripple.chargeSeconds * 1000).toLong())
+        val leadMs = ((ripple.chargeSeconds - pt.johnny.bump.feedback.Feedback.RELEASE_SOUND_LEAD_SECONDS) * 1000).toLong().coerceAtLeast(0)
+        main.postDelayed({ app.feedback.play(Cue.BUMP) }, leadMs)
         main.removeCallbacks(nobodyTimeout)
         sendStartedAt = SystemClock.elapsedRealtime()
         _state.update { it.copy(phase = Phase.SENDING, title = "A enviar", hint = "", progress = 0f, waveTick = it.waveTick + 1) }

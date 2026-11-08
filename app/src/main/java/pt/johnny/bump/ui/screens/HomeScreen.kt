@@ -6,6 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -74,6 +75,7 @@ import pt.johnny.bump.ui.PresenceOrb
 import pt.johnny.bump.ui.Screen
 import pt.johnny.bump.ui.SectionHeader
 import pt.johnny.bump.ui.relativeTime
+import pt.johnny.bump.ui.pressScale
 
 @Composable
 fun HomeScreen(onOpen: (Screen) -> Unit) {
@@ -137,10 +139,11 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                         textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp),
                     )
                     Spacer(Modifier.height(20.dp))
+                    val press = remember { MutableInteractionSource() }
                     if (settings.receiving) {
-                        FilledTonalButton(onClick = ::toggleReceiving, modifier = Modifier.fillMaxWidth().height(54.dp)) { Text("Parar receção") }
+                        FilledTonalButton(onClick = ::toggleReceiving, interactionSource = press, modifier = Modifier.fillMaxWidth().height(54.dp).pressScale(press)) { Text("Parar receção") }
                     } else {
-                        Button(onClick = ::toggleReceiving, modifier = Modifier.fillMaxWidth().height(54.dp)) { Text("Ativar receção") }
+                        Button(onClick = ::toggleReceiving, interactionSource = press, modifier = Modifier.fillMaxWidth().height(54.dp).pressScale(press)) { Text("Ativar receção") }
                     }
                 }
             }

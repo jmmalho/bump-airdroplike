@@ -73,6 +73,7 @@ import pt.johnny.bump.data.Direction
 import pt.johnny.bump.feedback.Cue
 import pt.johnny.bump.link.Permissions
 import pt.johnny.bump.ui.BumpIllustration
+import pt.johnny.bump.ui.pressScale
 import pt.johnny.bump.ui.handoff.NameDropView
 import pt.johnny.bump.ui.handoff.RippleParams
 import pt.johnny.bump.ui.theme.Brand
@@ -236,7 +237,7 @@ fun DemoScreen(onBack: () -> Unit) {
         v.params = p
         v.setHeadline("A receber", "De Galaxy S24 Ultra")
         v.setFile("apontamentos.pdf", "application/pdf")
-        v.onChargeComplete = { fb.play(Cue.BUMP) }
+        v.onReleaseCue = { fb.play(Cue.BUMP) }
         fb.playCharge(p.chargeSeconds)
         v.play()
         val start = System.currentTimeMillis()
@@ -337,7 +338,8 @@ fun OnboardingScreen(onDone: () -> Unit) {
             }
         }
         Spacer(Modifier.height(28.dp))
-        Button(onClick = onDone, enabled = nearby, modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth().height(56.dp)) { Text("Começar") }
+        val press = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+        Button(onClick = onDone, enabled = nearby, interactionSource = press, modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth().height(56.dp).pressScale(press)) { Text("Começar") }
     }
 }
 

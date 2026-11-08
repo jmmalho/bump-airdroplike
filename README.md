@@ -43,6 +43,16 @@ sem nomes nem indicadores, e o tablet não mostra nada. O destino só aparece qu
 Os parâmetros (velocidade, amplitude, nitidez, largura, distorção, brilho, tempo de carga) afinam-se em
 **Definições › Laboratório da animação** e podem ser guardados para as transferências reais.
 
+## Som e movimento
+
+- **Sons** (`res/raw`, OGG): `bump_send` (libertação), `bump_sent`, `bump_received`, `bump_error`.
+  Silêncio inicial removido e picos nivelados a -3 dBFS. O `bump_send` cresce até ao pico aos 300 ms,
+  por isso começa 0,3 s antes da libertação para o pico cair exatamente no rebentar da onda.
+- **Movimento** (`ui/theme/Motion.kt`): molas definidas como no SwiftUI (`response`, `dampingFraction`)
+  e entradas com `cubic-bezier(0.16, 1, 0.3, 1)`. A folha de envio entra com mola, segue o dedo e sai
+  com a velocidade do gesto (ou volta com ressalto); os ecrãs deslizam com mola; os botões principais
+  encolhem ao toque e voltam com ressalto; o cartão do ficheiro chega com uma mola de 3 % de overshoot.
+
 ## Tecnologias
 
 | Área | Antes (v0.6) | Agora (1.0) | Porquê |
