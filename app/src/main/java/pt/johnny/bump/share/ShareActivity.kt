@@ -77,7 +77,7 @@ import pt.johnny.bump.link.Radios
 import pt.johnny.bump.ui.BumpIllustration
 import pt.johnny.bump.ui.DeviceAvatar
 import pt.johnny.bump.ui.FileThumb
-import pt.johnny.bump.ui.handoff.HandoffView
+import pt.johnny.bump.ui.handoff.NameDropView
 import pt.johnny.bump.ui.theme.BumpTheme
 import pt.johnny.bump.ui.theme.Brand
 
@@ -113,41 +113,31 @@ private fun ShareSheet(vm: ShareViewModel, onClose: () -> Unit) {
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshRadios(); if (s.phase == Phase.PERMISSIONS && Permissions.granted(context)) vm.begin() }
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.begin() }
 
-    LaunchedEffect(s.phase) { if (s.phase == Phase.SENT) { delay(1700); onClose() } }
+    LaunchedEffect(s.phase) { if (s.phase == Phase.SENT) { delay(1800); onClose() } }
 
-    // Scrim + light, drawn by the same view the receiver uses.
-    val scrim by animateFloatAsState(if (s.phase == Phase.SENDING || s.phase == Phase.SENT) .0f else .35f, tween(400), label = "scrim")
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = scrim)).clickable(remember { MutableInteractionSource() }, null) { if (s.phase != Phase.SENDING) onClose() }) {
-        AndroidView(
-            factory = { HandoffView(it, sender = true).apply { showCapsule = false } },
-            update = { v ->
-                when (s.phase) {
-                    Phase.READY -> if (v.mode != HandoffView.Mode.READY || v.tag != "ready") { v.play(HandoffView.Mode.READY); v.tag = "ready" }
-                    Phase.SENDING -> if (v.tag != "send${s.waveTick}") { v.play(HandoffView.Mode.SEND); v.tag = "send${s.waveTick}" }
-                    Phase.ERROR -> if (v.tag != "error") { v.play(HandoffView.Mode.ERROR); v.tag = "error" }
-                    else -> Unit
-                }
-                v.visibility = if (s.phase in listOf(Phase.READY, Phase.SENDING, Phase.SENT, Phase.ERROR)) android.view.View.VISIBLE else android.view.View.INVISIBLE
-            },
-            modifier = Modifier.fillMaxSize(),
-        )
+    val handoff = s.waveTick > 0 // the bump happened: NameDrop takes over the whole screen
 
-        Surface(
-            Modifier.align(Alignment.BottomCenter).widthIn(max = 560.dp).fillMaxWidth()
-                .clickable(remember { MutableInteractionSource() }, null) { },
-            shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
-            color = MaterialTheme.colorScheme.surface,
-            shadowElevation = 16.dp,
-        ) {
-            Column(Modifier.navigationBarsPadding().padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 16.dp)) {
-                Box(Modifier.align(Alignment.CenterHorizontally).size(36.dp, 4.dp).background(MaterialTheme.colorScheme.outlineVariant, CircleShape))
-                FileHeader(s, onClose)
-                Spacer(Modifier.height(18.dp))
-                AnimatedContent(targetState = s.phase, transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(160)) }, label = "phase") { phase ->
-                    when (phase) {
+    Box(Modifier.fillMaxSize()) {
+        if (!handoff) {
+            Box(
+                Modifier.fillMaxSize().background(Color.Black.copy(alpha = .38f))
+                    .clickable(remember { MutableInteractionSource() }, null) { onClose() },
+            )
+            Surface(
+                Modifier.align(Alignment.BottomCenter).widthIn(max = 560.dp).fillMaxWidth()
+                    .clickable(remember { MutableInteractionSource() }, null) { },
+                shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
+                color = MaterialTheme.colorScheme.surface,
+                shadowElevation = 16.dp,
+            ) {
+                Column(Modifier.navigationBarsPadding().padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 12.dp)) {
+                    Box(Modifier.align(Alignment.CenterHorizontally).size(36.dp, 4.dp).background(MaterialTheme.colorScheme.outlineVariant, CircleShape))
+                    FileHeader(s, onClose)
+                    Spacer(Modifier.height(8.dp))
+                    when (s.phase) {
                         Phase.PREPARING -> Center { CircularProgressIndicator(Modifier.size(28.dp)); Caption("A preparar o ficheiro…") }
                         Phase.PERMISSIONS -> Center {
-                            Caption("O BUMP precisa de acesso a dispositivos próximos para encontrar o outro aparelho.")
+                            Caption("O BUMP precisa de acesso a dispositivos próximos para sentir o outro aparelho.")
                             Button(onClick = { permLauncher.launch(Permissions.missing(context).toTypedArray()) }, Modifier.fillMaxWidth().height(52.dp)) { Text("Autorizar") }
                         }
                         Phase.RADIOS_OFF -> Center {
@@ -159,7 +149,7 @@ private fun ShareSheet(vm: ShareViewModel, onClose: () -> Unit) {
                         }
                         Phase.PAIRING -> s.pairing?.let { p ->
                             Center {
-                                Text("Emparelhar com ${p.name}", style = MaterialTheme.typography.titleMedium)
+                                Text("Novo dispositivo: ${p.name}", style = MaterialTheme.typography.titleMedium)
                                 Caption("Confirma que o outro ecrã mostra o mesmo código. Só fazes isto uma vez.")
                                 Text(p.digits, style = MaterialTheme.typography.displaySmall.copy(fontFamily = FontFamily.Monospace, letterSpacing = 6.sp), color = MaterialTheme.colorScheme.primary)
                                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -168,45 +158,51 @@ private fun ShareSheet(vm: ShareViewModel, onClose: () -> Unit) {
                                 }
                             }
                         } ?: Spacer(Modifier.height(1.dp))
-                        Phase.SENDING, Phase.SENT -> SendingBlock(s)
                         Phase.ERROR -> Center {
                             Text(s.error ?: "Algo correu mal.", style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
                             Button(onClick = vm::retry, Modifier.fillMaxWidth().height(52.dp)) { Text("Tentar de novo") }
                         }
-                        else -> DevicesBlock(s, vm)
+                        // SEARCHING, CONNECTING and READY look exactly the same on purpose.
+                        else -> BumpPrompt(s, vm)
                     }
                 }
             }
+        } else {
+            AndroidView(
+                factory = { c ->
+                    NameDropView(c).apply {
+                        params = vm.ripple
+                        setFile(s.firstName, s.firstMime)
+                        setHeadline("A enviar", "Para ${s.target?.name ?: "outro dispositivo"}")
+                        play()
+                        val uri = s.firstUri
+                        if (uri != null && Build.VERSION.SDK_INT >= 29) Thread {
+                            runCatching { c.contentResolver.loadThumbnail(uri, android.util.Size(384, 384), null) }.getOrNull()
+                                ?.let { b -> post { setThumbnail(b) } }
+                        }.start()
+                    }
+                },
+                update = { v ->
+                    v.setHeadline(if (s.phase == Phase.SENT) s.title else "A enviar", "Para ${s.target?.name ?: "outro dispositivo"}")
+                    if (s.progress > 0f) v.setProgress(s.progress)
+                    when (s.phase) {
+                        Phase.SENT -> if (v.tag != "done") { v.tag = "done"; v.showDone("Para ${s.target?.name ?: "outro dispositivo"}", null, null) }
+                        Phase.ERROR -> if (v.tag != "error") { v.tag = "error"; v.showError(s.error ?: "A transferência falhou") }
+                        else -> Unit
+                    }
+                },
+                modifier = Modifier.fillMaxSize().clickable(remember { MutableInteractionSource() }, null) {
+                    if (s.phase == Phase.SENT || s.phase == Phase.ERROR) onClose()
+                },
+            )
         }
     }
 }
 
 @Composable
 private fun FileHeader(s: ShareState, onClose: () -> Unit) {
-    // The thumbnail "launches" upward when the wave starts, then lands back with a check.
-    val lift = remember { Animatable(0f) }
-    LaunchedEffect(s.waveTick) {
-        if (s.waveTick > 0) {
-            lift.snapTo(0f)
-            lift.animateTo(1f, tween(650, easing = FastOutSlowInEasing))
-        }
-    }
-    val landed = s.phase == Phase.SENT
     Row(Modifier.fillMaxWidth().padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            Modifier.graphicsLayer {
-                val up = if (landed) 0f else lift.value
-                translationY = -up * 420f
-                alpha = if (landed) 1f else 1f - up
-                scaleX = 1f - .4f * up; scaleY = 1f - .4f * up
-            },
-            contentAlignment = Alignment.Center,
-        ) {
-            FileThumb(s.firstUri, s.firstName, s.firstMime)
-            if (landed) Box(Modifier.size(56.dp).background(Brand.Success.copy(alpha = .85f), RoundedCornerShape(16.dp)), contentAlignment = Alignment.Center) {
-                Icon(Icons.Rounded.Check, null, tint = Color.White, modifier = Modifier.size(30.dp))
-            }
-        }
+        FileThumb(s.firstUri, s.firstName, s.firstMime)
         Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
             Text(
                 if (s.fileCount > 1) "${s.fileCount} ficheiros" else s.firstName.ifBlank { "Ficheiro" },
@@ -222,86 +218,50 @@ private fun FileHeader(s: ShareState, onClose: () -> Unit) {
     }
 }
 
+/**
+ * The only thing the user sees before the touch. It never says whether a device is
+ * connected, which one, or that anything is loading: the reveal happens on contact.
+ */
 @Composable
-private fun DevicesBlock(s: ShareState, vm: ShareViewModel) {
-    Column(Modifier.fillMaxWidth()) {
-        if (s.devices.isEmpty()) {
-            Row(Modifier.fillMaxWidth().height(96.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.5.dp)
-                Spacer(Modifier.width(12.dp))
-                Text("À procura dos teus dispositivos…", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Text(
-                "No outro aparelho, abre o BUMP e confirma que a receção está ativa.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(),
-            )
-        } else {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                items(s.devices, key = { it.endpointId }) { d -> DeviceChip(d, s, onTap = { vm.tapDevice(d) }) }
-            }
-        }
+private fun BumpPrompt(s: ShareState, vm: ShareViewModel) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        BumpIllustration(Modifier.size(150.dp))
+        Text("Encosta ao outro dispositivo", style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
+        Text(
+            when {
+                s.weakSignal -> "Quase. Junta mesmo o topo dos dois ecrãs."
+                s.manualQueued -> "Vai seguir assim que o outro dispositivo responder."
+                s.nobodyAround -> "Não sinto nenhum dispositivo. Confirma que o BUMP está a receber no outro aparelho."
+                else -> "Junta o topo dos dois ecrãs com um toque leve."
+            },
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp, start = 12.dp, end = 12.dp),
+        )
 
-        if (s.phase == Phase.READY && s.bumpSupported) {
-            Row(Modifier.fillMaxWidth().padding(top = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                BumpIllustration(Modifier.size(84.dp))
-                Column(Modifier.weight(1f).padding(start = 14.dp)) {
-                    Text(s.title, style = MaterialTheme.typography.titleMedium)
-                    Text(s.hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (s.proximityNear) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
-                        Box(Modifier.size(8.dp).background(Brand.Success, CircleShape))
-                        Text("  Muito perto", style = MaterialTheme.typography.labelMedium, color = Brand.Success)
+        // New (never-paired) devices are the only ones listed: pairing needs an explicit choice.
+        val fresh = s.devices.filter { !it.trusted }
+        if (fresh.isNotEmpty()) {
+            Text(
+                "Novo por perto", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(top = 22.dp, bottom = 6.dp),
+            )
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                items(fresh, key = { it.endpointId }) { d ->
+                    Box(Modifier.clickable { vm.tapDevice(d) }.padding(4.dp)) {
+                        DeviceAvatar(d.name, d.tablet, size = 54.dp, badge = { ChipBadge() })
                     }
                 }
             }
-        } else if (s.hint.isNotBlank()) {
-            Text(s.hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 14.dp))
         }
 
-        Spacer(Modifier.height(18.dp))
-        Button(onClick = vm::sendNow, enabled = s.phase == Phase.READY, modifier = Modifier.fillMaxWidth().height(54.dp)) {
-            Text(if (s.phase == Phase.READY) "Enviar sem tocar" else if (s.phase == Phase.CONNECTING) "A ligar…" else "Enviar")
-        }
+        TextButton(onClick = vm::sendNow, enabled = !s.manualQueued, modifier = Modifier.padding(top = 12.dp)) { Text("Enviar sem tocar") }
     }
 }
 
 @Composable
-private fun DeviceChip(d: NearbyLink.Remote, s: ShareState, onTap: () -> Unit) {
-    val isTarget = s.target?.endpointId == d.endpointId
-    val ring = when {
-        isTarget && s.phase == Phase.READY -> Brand.Success
-        isTarget -> MaterialTheme.colorScheme.primary
-        else -> null
-    }
-    val connecting = isTarget && s.phase == Phase.CONNECTING
-    Box(Modifier.clickable(onClick = onTap).padding(4.dp)) {
-        DeviceAvatar(
-            d.name, d.tablet, ring = ring,
-            badge = if (connecting || !d.trusted) ({ ChipBadge(connecting) }) else null,
-        )
-    }
-}
-
-@Composable
-private fun ChipBadge(connecting: Boolean) {
-    if (connecting) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-    else Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer) {
+private fun ChipBadge() {
+    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer) {
         Icon(Icons.Rounded.Link, "Novo", Modifier.padding(3.dp).size(14.dp))
-    }
-}
-
-@Composable
-private fun SendingBlock(s: ShareState) {
-    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(
-            if (s.phase == Phase.SENT) s.title else "A enviar para ${s.target?.name ?: "…"}",
-            style = MaterialTheme.typography.titleMedium,
-        )
-        LinearProgressIndicator(progress = { s.progress }, modifier = Modifier.fillMaxWidth().height(6.dp), strokeCap = androidx.compose.ui.graphics.StrokeCap.Round)
-        Text(
-            if (s.phase == Phase.SENT) "Pronto" else "${Files.humanSize(s.transferred)} de ${Files.humanSize(s.totalBytes)}",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(54.dp))
     }
 }
 

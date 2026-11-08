@@ -58,7 +58,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import pt.johnny.bump.data.Files
-import pt.johnny.bump.ui.handoff.HandoffView
+import pt.johnny.bump.ui.handoff.Palette
 import pt.johnny.bump.ui.theme.Brand
 import kotlin.math.PI
 import kotlin.math.sin
@@ -138,7 +138,7 @@ fun BumpIllustration(modifier: Modifier = Modifier, accent: Color = MaterialThem
 @Composable
 fun KindTile(name: String, mime: String, modifier: Modifier = Modifier, size: Dp = 46.dp) {
     val kind = Files.kind(name, mime)
-    val tint = Color(HandoffView.kindColor(kind))
+    val tint = Color(Palette.kindColor(kind))
     Box(
         modifier.size(size).clip(RoundedCornerShape(size * .3f)).background(tint.copy(alpha = .12f)),
         contentAlignment = Alignment.Center,

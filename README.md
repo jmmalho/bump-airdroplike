@@ -25,6 +25,24 @@ Movimentos lentos da mão, levantar o telemóvel ou pousá-lo não disparam: o d
 íngreme (variação brusca entre amostras) e a correlação temporal com o outro aparelho.
 Se o toque falhar, tocar no avatar do dispositivo ou em **Enviar sem tocar** envia na mesma.
 
+## A animação (estilo NameDrop)
+
+No instante do toque, os dois ecrãs fazem a mesma coreografia, ao mesmo tempo:
+
+1. **Carga** (1,2 s): um brilho branco com aro iridescente cresce no topo, onde os aparelhos se tocam,
+   com uma vibração que sobe de intensidade.
+2. **Libertação**: um tic seco, o brilho rebenta e uma onda de refração desce pelo ecrã, dobrando e
+   iluminando o fundo. É um shader AGSL (`RuntimeShader`, Android 13+), portado do Metal do
+   [NameDrop Lab](https://github.com/Georgvm/iOS-NameDrop-Animation) e do
+   [NameDrop de cyrilzakka](https://github.com/cyrilzakka/NameDrop) (MIT).
+3. **Cartão**: o ficheiro aparece no meio com o progresso; no tablet, com o botão para abrir.
+
+Antes do toque **nada revela a ligação**: a folha de envio diz sempre "Encosta ao outro dispositivo",
+sem nomes nem indicadores, e o tablet não mostra nada. O destino só aparece quando a onda passa.
+
+Os parâmetros (velocidade, amplitude, nitidez, largura, distorção, brilho, tempo de carga) afinam-se em
+**Definições › Laboratório da animação** e podem ser guardados para as transferências reais.
+
 ## Tecnologias
 
 | Área | Antes (v0.6) | Agora (1.0) | Porquê |
@@ -73,7 +91,7 @@ app/src/main/java/pt/johnny/bump/
   data/      Stores (definições, identidade, dispositivos, histórico), Files (staging, MediaStore, provider)
   share/     ShareActivity + ShareViewModel (folha de envio)
   receive/   ReceiverService (serviço em primeiro plano, overlay, notificações)
-  ui/        Compose: tema, ecrãs, componentes, HandoffView (animação partilhada)
+  ui/        Compose: tema, ecrãs, componentes, NameDropView (onda AGSL + brilho + cartão)
 app/src/test/  BumpLogicTest (12 testes: impacto, ruído, refractário, relógio, correlação, protocolo, HMAC)
 ```
 

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -72,7 +73,8 @@ import pt.johnny.bump.data.Direction
 import pt.johnny.bump.feedback.Cue
 import pt.johnny.bump.link.Permissions
 import pt.johnny.bump.ui.BumpIllustration
-import pt.johnny.bump.ui.handoff.HandoffView
+import pt.johnny.bump.ui.handoff.NameDropView
+import pt.johnny.bump.ui.handoff.RippleParams
 import pt.johnny.bump.ui.theme.Brand
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -139,7 +141,7 @@ fun SettingsScreen(onBack: () -> Unit, onDemo: () -> Unit) {
                 Group("Som e vibração")
                 ToggleRow("Efeitos sonoros", "Respeitam o modo silencioso", s.sounds) { app.settings.setSounds(it) }
                 ToggleRow("Vibração", "Um toque no momento do encosto", s.haptics) { app.settings.setHaptics(it) }
-                OutlinedButton(onClick = onDemo, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Ver a animação e ouvir os sons") }
+                OutlinedButton(onClick = onDemo, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Laboratório da animação") }
 
                 Group("Privacidade")
                 Text(
@@ -219,50 +221,82 @@ fun HistoryScreen(onBack: () -> Unit) {
     )
 }
 
-// ---------------------------------------------------------------- Demo
+// ---------------------------------------------------------------- Demo / NameDrop lab
 
 @Composable
 fun DemoScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val fb = context.app.feedback
-    var view by remember { mutableStateOf<HandoffView?>(null) }
+    var view by remember { mutableStateOf<NameDropView?>(null) }
+    var p by remember { mutableStateOf(RippleParams.load(context)) }
+    var panel by remember { mutableStateOf(true) }
 
-    Page("Demonstração", onBack) { m ->
-        Box(m.fillMaxSize()) {
-            AndroidView(
-                factory = { c ->
-                    HandoffView(c, sender = false).apply {
-                        setFile("apontamentos.pdf", "application/pdf"); setPeer("Galaxy S24 Ultra"); play(HandoffView.Mode.READY)
-                    }.also { view = it }
-                },
-                modifier = Modifier.fillMaxSize(),
-            )
-            Surface(
-                Modifier.align(Alignment.BottomCenter).padding(20.dp).navigationBarsPadding().widthIn(max = 520.dp),
-                shape = MaterialTheme.shapes.extraLarge, tonalElevation = 3.dp, shadowElevation = 8.dp,
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Simulação, sem transferência", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
-                    Button(onClick = {
-                        val v = view ?: return@Button
-                        fb.play(Cue.INCOMING); v.setDetail(""); v.play(HandoffView.Mode.RECEIVE)
-                        var p = 0f
-                        val step = object : Runnable {
-                            override fun run() {
-                                p += .08f; v.setProgress(p.coerceAtMost(1f))
-                                if (p < 1f) v.postDelayed(this, 90) else v.postDelayed({ fb.play(Cue.RECEIVED); v.setDetail("2,4 MB"); v.play(HandoffView.Mode.DONE) }, 300)
-                            }
-                        }
-                        v.postDelayed(step, 350)
-                    }, modifier = Modifier.fillMaxWidth()) { Text("Receber um ficheiro") }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { fb.play(Cue.READY); view?.play(HandoffView.Mode.READY) }, Modifier.weight(1f)) { Text("Pronto") }
-                        OutlinedButton(onClick = { fb.play(Cue.BUMP) }, Modifier.weight(1f)) { Text("Toque") }
-                        OutlinedButton(onClick = { fb.play(Cue.ERROR); view?.setDetail("A ligação caiu"); view?.play(HandoffView.Mode.ERROR) }, Modifier.weight(1f)) { Text("Erro") }
-                    }
+    fun replay() {
+        val v = view ?: return
+        v.params = p
+        v.setHeadline("A receber", "De Galaxy S24 Ultra")
+        v.setFile("apontamentos.pdf", "application/pdf")
+        v.onChargeComplete = { fb.play(Cue.BUMP) }
+        fb.playCharge(p.chargeSeconds)
+        v.play()
+        val start = System.currentTimeMillis()
+        val revealMs = ((p.chargeSeconds + p.rippleSeconds * .3f + .55f) * 1000).toLong()
+        val tick = object : Runnable {
+            override fun run() {
+                val e = System.currentTimeMillis() - start
+                val prog = ((e - p.chargeSeconds * 1000) / 1600f).coerceIn(0f, 1f)
+                v.setProgress(prog)
+                if (prog < 1f || e < revealMs) v.postDelayed(this, 50)
+                else { fb.play(Cue.RECEIVED); v.showDone("De Galaxy S24 Ultra · 2,4 MB", "Abrir PDF") { } }
+            }
+        }
+        v.postDelayed(tick, 50)
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        AndroidView(
+            factory = { c -> NameDropView(c).also { view = it; it.post { replay() } } },
+            modifier = Modifier.fillMaxSize(),
+        )
+        IconButton(onClick = onBack, modifier = Modifier.statusBarsPadding().padding(8.dp)) {
+            Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Voltar", tint = androidx.compose.ui.graphics.Color.White)
+        }
+        Surface(
+            Modifier.align(Alignment.BottomCenter).padding(12.dp).navigationBarsPadding().widthIn(max = 560.dp).fillMaxWidth(),
+            shape = MaterialTheme.shapes.extraLarge, tonalElevation = 3.dp, shadowElevation = 10.dp,
+        ) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { replay() }) { Text("Repetir") }
+                    OutlinedButton(onClick = { p = RippleParams(); replay() }) { Text("Repor") }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = { RippleParams.save(context, p) }) { Text("Usar nas transferências") }
+                }
+                TextButton(onClick = { panel = !panel }) { Text(if (panel) "Esconder parâmetros" else "Mostrar parâmetros") }
+                if (panel) Column(Modifier.heightIn(max = 300.dp).verticalScroll(rememberScrollState())) {
+                    Param("Velocidade", p.speed, .1f..1.5f) { p = p.copy(speed = it) }
+                    Param("Amplitude", p.amplitude, 1f..50f, "%.0f") { p = p.copy(amplitude = it) }
+                    Param("Nitidez", p.sharpness, .05f..2f) { p = p.copy(sharpness = it) }
+                    Param("Largura do anel", p.width, .02f..0.4f) { p = p.copy(width = it) }
+                    Param("Distorção", p.distortion, 0f..4f) { p = p.copy(distortion = it) }
+                    Param("Brilho da onda", p.highlight, 0f..4f) { p = p.copy(highlight = it) }
+                    Param("Tempo de carga (s)", p.chargeSeconds, 0f..2.5f) { p = p.copy(chargeSeconds = it) }
+                    Param("Tamanho do brilho", p.glowSize, .3f..2f) { p = p.copy(glowSize = it) }
+                    Param("Intensidade do brilho", p.glowIntensity, 0f..1.5f) { p = p.copy(glowIntensity = it) }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun Param(title: String, value: Float, range: ClosedFloatingPointRange<Float>, format: String = "%.2f", onChange: (Float) -> Unit) {
+    Column {
+        Row {
+            Text(title, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            Text(String.format(java.util.Locale.ROOT, format, value), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Slider(value = value, onValueChange = onChange, valueRange = range)
     }
 }
 

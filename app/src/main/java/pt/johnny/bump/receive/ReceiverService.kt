@@ -11,7 +11,6 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
-import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -21,7 +20,6 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.WindowManager
-import android.widget.TextView
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -39,8 +37,8 @@ import pt.johnny.bump.motion.Beacon
 import pt.johnny.bump.motion.MotionSensor
 import pt.johnny.bump.ui.MainActivity
 import pt.johnny.bump.ui.OpenFileActivity
-import pt.johnny.bump.ui.handoff.HandoffView
-import pt.johnny.bump.ui.handoff.dp
+import pt.johnny.bump.ui.handoff.NameDropView
+import pt.johnny.bump.ui.handoff.RippleParams
 
 /** Visible connectedDevice foreground service that lets paired devices bump files into this one. */
 class ReceiverService : Service(), NearbyLink.Listener {
@@ -68,8 +66,8 @@ class ReceiverService : Service(), NearbyLink.Listener {
     private var radioReceiver: BroadcastReceiver? = null
 
     private var windowManager: WindowManager? = null
-    private var overlay: HandoffView? = null
-    private var action: TextView? = null
+    private var overlay: NameDropView? = null
+    private var peerName: String? = null
     private val removeOverlay = Runnable { hideOverlay() }
     private val disarmTimeout = Runnable { disarm() }
     private val calmBeacon = Runnable { if (running) beacon.advertise(token, active = false) }
@@ -185,9 +183,11 @@ class ReceiverService : Service(), NearbyLink.Listener {
     }
 
     // ---------- session ----------
+    // Nothing on screen before the bump: the connection stays invisible so the touch feels like magic.
 
     override fun onReady(remote: NearbyLink.Remote) {
-        publish("Ligado a ${remote.name}", peer = remote.name)
+        peerName = remote.name
+        publish("Pronto a receber")
         link?.send(Msg.Beacon(token))
         beacon.advertise(token, active = true)
         main.removeCallbacks(calmBeacon)
@@ -199,7 +199,6 @@ class ReceiverService : Service(), NearbyLink.Listener {
             is Msg.Arm -> arm(msg)
             Msg.Disarm -> disarm()
             is Msg.Go -> incoming()
-            Msg.Done -> Unit
             else -> Unit
         }
     }
@@ -211,8 +210,6 @@ class ReceiverService : Service(), NearbyLink.Listener {
         motion.start(app.settings.receiverThreshold())
         main.removeCallbacks(disarmTimeout)
         main.postDelayed(disarmTimeout, 90_000)
-        publish("${_status.value.peer ?: "Um dispositivo"} quer partilhar $armedName")
-        showOverlay(HandoffView.Mode.READY)
     }
 
     private fun disarm() {
@@ -220,18 +217,17 @@ class ReceiverService : Service(), NearbyLink.Listener {
         armed = false
         motion.stop()
         main.removeCallbacks(disarmTimeout)
-        if (overlay?.mode == HandoffView.Mode.READY) hideOverlay()
-        publish(if (_status.value.peer != null) "Ligado a ${_status.value.peer}" else "Visível para os teus dispositivos")
     }
 
     private fun incoming() {
         armed = false
         motion.stop()
         main.removeCallbacks(disarmTimeout)
-        app.feedback.play(Cue.INCOMING)
         publish("A receber $armedName")
-        showOverlay(HandoffView.Mode.RECEIVE)
         waveStartedAt = SystemClock.elapsedRealtime()
+        val params = RippleParams.load(this)
+        app.feedback.playCharge(params.chargeSeconds)
+        showOverlay(params)
     }
 
     override fun onIncomingStarted(name: String, mime: String) {
@@ -240,41 +236,50 @@ class ReceiverService : Service(), NearbyLink.Listener {
 
     override fun onProgress(fraction: Float, bytes: Long, total: Long) {
         overlay?.setProgress(fraction)
-        overlay?.setDetail("${Files.humanSize(bytes)} de ${Files.humanSize(total)}")
     }
 
     override fun onFileSaved(name: String, mime: String, size: Long, uri: Uri) {
         publish("Recebido: $name")
-        val wait = (1450 - (SystemClock.elapsedRealtime() - waveStartedAt)).coerceAtLeast(0)
+        notifyReceived(name, mime, uri)
+        val p = RippleParams.load(this)
+        val cardVisibleMs = ((p.chargeSeconds + p.rippleSeconds * 0.3f + 0.55f) * 1000).toLong()
+        val wait = (cardVisibleMs - (SystemClock.elapsedRealtime() - waveStartedAt)).coerceAtLeast(0)
+        loadThumb(uri) { bmp -> overlay?.setThumbnail(bmp) }
         main.postDelayed({
             app.feedback.play(Cue.RECEIVED)
             overlay?.let {
                 it.setFile(name, mime)
-                it.setDetail(Files.humanSize(size))
-                it.play(HandoffView.Mode.DONE)
-                showOpenAction(name, mime, uri)
+                it.showDone("De ${peerName ?: "outro dispositivo"} · ${Files.humanSize(size)}", Files.openLabel(name, mime)) {
+                    hideOverlay()
+                    runCatching { startActivity(OpenFileActivity.intent(this, uri, name, mime).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                }
                 main.removeCallbacks(removeOverlay)
-                main.postDelayed(removeOverlay, 6000)
+                main.postDelayed(removeOverlay, 9000)
             }
         }, wait)
-        notifyReceived(name, mime, uri)
+    }
+
+    private fun loadThumb(uri: Uri, done: (android.graphics.Bitmap?) -> Unit) {
+        if (Build.VERSION.SDK_INT < 29) return
+        Thread {
+            val b = runCatching { contentResolver.loadThumbnail(uri, android.util.Size(384, 384), null) }.getOrNull()
+            if (b != null) main.post { done(b) }
+        }.start()
     }
 
     override fun onDisconnected(remote: NearbyLink.Remote?) {
         disarm()
-        publish("Visível para os teus dispositivos", peer = null)
+        publish("Pronto a receber")
         main.postDelayed({ if (running) restartLink() }, 1500)
     }
 
     override fun onError(message: String) {
         publish(message)
-        if (overlay != null && overlay?.mode != HandoffView.Mode.DONE) {
-            overlay?.setDetail(message)
-            overlay?.play(HandoffView.Mode.ERROR)
-            app.feedback.play(Cue.ERROR)
-            main.removeCallbacks(removeOverlay)
-            main.postDelayed(removeOverlay, 2600)
-        }
+        val o = overlay ?: return
+        o.showError(message)
+        app.feedback.play(Cue.ERROR)
+        main.removeCallbacks(removeOverlay)
+        main.postDelayed(removeOverlay, 3500)
     }
 
     // ---------- notifications ----------
@@ -291,7 +296,7 @@ class ReceiverService : Service(), NearbyLink.Listener {
         )
         val n = Notification.Builder(this, BumpApp.CH_FILES)
             .setSmallIcon(R.drawable.ic_stat_bump)
-            .setContentTitle("Recebido de ${_status.value.peer ?: "dispositivo"}")
+            .setContentTitle("Recebido de ${peerName ?: "outro dispositivo"}")
             .setContentText(name)
             .setContentIntent(open)
             .addAction(Notification.Action.Builder(null, Files.openLabel(name, mime), open).build())
@@ -303,77 +308,42 @@ class ReceiverService : Service(), NearbyLink.Listener {
 
     // ---------- overlay ----------
 
-    private fun canShowOverlay(): Boolean {
-        val power = getSystemService(PowerManager::class.java)
-        return Permissions.overlayGranted(this) && power?.isInteractive == true
-    }
-
-    private fun showOverlay(mode: HandoffView.Mode) {
-        if (!canShowOverlay()) return
-        main.removeCallbacks(removeOverlay)
-        val existing = overlay
-        if (existing != null) {
-            existing.setFile(armedName, armedMime)
-            existing.setPeer(_status.value.peer.orEmpty())
-            existing.play(mode)
-            main.postDelayed(removeOverlay, if (mode == HandoffView.Mode.READY) 90_000 else 120_000)
-            return
-        }
-        val view = HandoffView(this, sender = false).apply {
+    private fun showOverlay(params: RippleParams) {
+        if (!Permissions.overlayGranted(this)) return
+        if (getSystemService(PowerManager::class.java)?.isInteractive != true) return // never wake a sleeping screen
+        hideOverlay()
+        val view = NameDropView(this).apply {
+            this.params = params
             setFile(armedName, armedMime)
-            setPeer(_status.value.peer.orEmpty())
+            setHeadline("A receber", "De ${peerName ?: "outro dispositivo"}")
+            onChargeComplete = { app.feedback.play(Cue.BUMP) }
+            // Once the choreography is over, a tap anywhere dismisses (a long transfer keeps going).
+            setOnClickListener { if (!isRunning) hideOverlay() }
         }
-        val params = WindowManager.LayoutParams(
+        val params2 = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            PixelFormat.OPAQUE,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            // Android 12+: an untouchable overlay only lets touches through at ≤ 0.8 opacity.
-            alpha = 0.8f
+            if (Build.VERSION.SDK_INT >= 28) layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             if (Build.VERSION.SDK_INT >= 30) fitInsetsTypes = 0
+            windowAnimations = android.R.style.Animation_Toast
         }
         try {
-            windowManager?.addView(view, params)
+            windowManager?.addView(view, params2)
             overlay = view
-            view.play(mode)
-            main.postDelayed(removeOverlay, if (mode == HandoffView.Mode.READY) 90_000 else 120_000)
+            view.play()
+            main.postDelayed(removeOverlay, 120_000)
         } catch (_: Exception) { overlay = null }
-    }
-
-    private fun showOpenAction(name: String, mime: String, uri: Uri) {
-        if (!Permissions.overlayGranted(this)) return
-        action?.let { runCatching { windowManager?.removeView(it) } }
-        val button = TextView(this).apply {
-            text = "${Files.openLabel(name, mime)}  ›"
-            textSize = 16f
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setTextColor(0xFFFFFFFF.toInt())
-            gravity = Gravity.CENTER
-            val h = dp(26f).toInt(); val v = dp(12f).toInt()
-            setPadding(h, v, h, v)
-            background = android.graphics.drawable.GradientDrawable().apply {
-                cornerRadius = dp(28f); setColor(0xFF1F6BFF.toInt())
-            }
-            elevation = dp(8f)
-            setOnClickListener {
-                hideOverlay()
-                runCatching { startActivity(OpenFileActivity.intent(this@ReceiverService, uri, name, mime).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-            }
-        }
-        val p = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT,
-        ).apply { gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL; y = dp(72f).toInt() }
-        runCatching { windowManager?.addView(button, p); action = button }
     }
 
     private fun hideOverlay() {
         main.removeCallbacks(removeOverlay)
-        action?.let { runCatching { windowManager?.removeView(it) } }; action = null
-        overlay?.let { runCatching { windowManager?.removeView(it) } }; overlay = null
+        overlay?.let { runCatching { windowManager?.removeView(it) } }
+        overlay = null
     }
 
     override fun onDestroy() {

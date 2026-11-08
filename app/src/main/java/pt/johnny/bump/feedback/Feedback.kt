@@ -55,6 +55,36 @@ class Feedback(private val context: Context, private val settings: AppSettings) 
         if (s.haptics) vibrate(cue)
     }
 
+    /**
+     * NameDrop-style haptics: a hum that ramps up over the charge, a sharp tick at the
+     * release, then a short decaying tail. Uses amplitude control where available.
+     */
+    fun playCharge(chargeSeconds: Float) {
+        if (!settings.current.haptics) return
+        val v = vibrator ?: return
+        if (!v.hasVibrator()) return
+        try {
+            val chargeMs = (chargeSeconds * 1000).toLong().coerceAtLeast(50)
+            if (v.hasAmplitudeControl()) {
+                val steps = 12
+                val timings = ArrayList<Long>(); val amps = ArrayList<Int>()
+                for (i in 0 until steps) {
+                    val q = (i + 1f) / steps
+                    timings += chargeMs / steps
+                    amps += (20 + 200 * q * q).toInt().coerceIn(1, 255)
+                }
+                timings += 20; amps += 0          // gap before the tick
+                timings += 28; amps += 255        // tick
+                timings += 90; amps += 110        // tail
+                timings += 110; amps += 55
+                timings += 100; amps += 20
+                v.vibrate(VibrationEffect.createWaveform(timings.toLongArray(), amps.toIntArray(), -1))
+            } else {
+                v.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 15, chargeMs - 15, 30, 60, 20), -1))
+            }
+        } catch (_: Exception) { }
+    }
+
     private fun vibrate(cue: Cue) {
         val v = vibrator ?: return
         if (!v.hasVibrator()) return

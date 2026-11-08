@@ -49,6 +49,11 @@ data class ShareState(
     val proximityNear: Boolean = false,
     /** Increments every time the handoff wave must start; the UI animates on change. */
     val waveTick: Int = 0,
+    /** Shown only if nothing answers for a while; before that the sheet never reveals connection state. */
+    val nobodyAround: Boolean = false,
+    val manualQueued: Boolean = false,
+    /** A jolt matched but BLE says the other device is far: ask for a firmer, closer touch. */
+    val weakSignal: Boolean = false,
 )
 
 class ShareViewModel(application: Application) : AndroidViewModel(application), NearbyLink.Listener {
@@ -68,7 +73,11 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
     private var rssi = RssiGate(app.settings.current.rssiThreshold)
     private var initialized = false
     private var triggered = false
-    private var readyCuePlayed = false
+    private var manualQueued = false
+    val ripple = pt.johnny.bump.ui.handoff.RippleParams.load(application)
+    private val nobodyTimeout = Runnable {
+        if (link?.authenticated != true && _state.value.phase in listOf(Phase.SEARCHING, Phase.CONNECTING)) _state.update { it.copy(nobodyAround = true) }
+    }
     private var sendStartedAt = 0L
 
     private val syncLoop = object : Runnable {
@@ -114,6 +123,8 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
         if (!radios.ready) { _state.update { it.copy(phase = Phase.RADIOS_OFF, radios = radios, title = "Liga o Bluetooth e o Wi-Fi") }; return }
         _state.update { it.copy(phase = Phase.SEARCHING, radios = radios, title = "À procura…", hint = "Os teus dispositivos aparecem aqui", bumpSupported = motion.available) }
         link = NearbyLink(ctx, NearbyLink.Role.SENDER, this).also { it.startDiscovery() }
+        main.removeCallbacks(nobodyTimeout)
+        main.postDelayed(nobodyTimeout, 15_000)
     }
 
     fun refreshRadios() {
@@ -131,7 +142,11 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
         l.connect(remote.endpointId)
     }
 
-    fun sendNow() { if (link?.authenticated == true) trigger("button") }
+    /** Manual fallback. If the link is not up yet, the request waits and fires the moment it is. */
+    fun sendNow() {
+        if (link?.authenticated == true) trigger("button")
+        else { manualQueued = true; _state.update { it.copy(manualQueued = true) } }
+    }
 
     fun confirmPairing(accept: Boolean) {
         val p = _state.value.pairing ?: return
@@ -173,7 +188,7 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
 
     private fun onBump() {
         if (!rssi.allows(SystemClock.elapsedRealtimeNanos())) {
-            _state.update { it.copy(hint = "Toque sentido, mas o sinal está fraco. Encosta mesmo os dois.") }
+            _state.update { it.copy(weakSignal = true) }
             matcher.reset()
             return
         }
@@ -186,7 +201,10 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
         triggered = true
         motion.stop(); beacon.stopScan(); main.removeCallbacks(syncLoop)
         l.send(Msg.Go(reason))
-        app.feedback.play(if (reason == "bump") Cue.BUMP else Cue.SEND)
+        // Charge hum now, release tick + sound when the ripple bursts (same timeline as the receiver).
+        app.feedback.playCharge(ripple.chargeSeconds)
+        main.postDelayed({ app.feedback.play(Cue.BUMP) }, (ripple.chargeSeconds * 1000).toLong())
+        main.removeCallbacks(nobodyTimeout)
         sendStartedAt = SystemClock.elapsedRealtime()
         _state.update { it.copy(phase = Phase.SENDING, title = "A enviar", hint = "", progress = 0f, waveTick = it.waveTick + 1) }
         l.sendFiles(staged)
@@ -213,16 +231,15 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
     }
 
     override fun onReady(remote: NearbyLink.Remote) {
+        // Silent on purpose: no sound, no name. The user discovers the target only when they touch.
         _state.update {
             it.copy(
-                phase = Phase.READY, target = remote,
+                phase = Phase.READY, target = remote, nobodyAround = false,
                 devices = it.devices.map { d -> if (d.endpointId == remote.endpointId) d.copy(trusted = true) else d },
-                title = "Encosta ao ${remote.name}",
-                hint = if (motion.available) "Junta o topo dos dois ecrãs com um toque leve" else "Toca no dispositivo para enviar",
             )
         }
-        if (!readyCuePlayed) { readyCuePlayed = true; app.feedback.play(Cue.READY) }
         arm()
+        if (manualQueued) trigger("button")
     }
 
     override fun onControl(msg: Msg) {
@@ -246,8 +263,9 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
     }
 
     override fun onSendFinished(count: Int) {
-        // Keep the wave on screen for its full choreography even if a small file was instant.
-        val wait = (1450 - (SystemClock.elapsedRealtime() - sendStartedAt)).coerceAtLeast(0)
+        // Finish only once the card has risen behind the ripple, even if a small file was instant.
+        val cardVisibleMs = ((ripple.chargeSeconds + ripple.rippleSeconds * 0.3f + 0.55f) * 1000).toLong()
+        val wait = (cardVisibleMs - (SystemClock.elapsedRealtime() - sendStartedAt)).coerceAtLeast(0)
         main.postDelayed({
             _state.update { it.copy(phase = Phase.SENT, progress = 1f, title = if (count > 1) "$count ficheiros enviados" else "Enviado") }
             app.feedback.play(Cue.SENT)
@@ -259,7 +277,7 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
         if (s.phase == Phase.SENT) return
         motion.stop(); beacon.stopScan(); main.removeCallbacks(syncLoop)
         if (s.phase == Phase.SENDING) { error("A ligação caiu antes de terminar."); return }
-        _state.update { it.copy(phase = Phase.SEARCHING, target = null, title = "À procura…", hint = "${remote?.name ?: "O dispositivo"} afastou-se") }
+        _state.update { it.copy(phase = Phase.SEARCHING, target = null) }
         link?.startDiscovery()
     }
 
