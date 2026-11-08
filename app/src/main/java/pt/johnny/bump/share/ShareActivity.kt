@@ -272,18 +272,20 @@ private fun DeviceChip(d: NearbyLink.Remote, s: ShareState, onTap: () -> Unit) {
         isTarget -> MaterialTheme.colorScheme.primary
         else -> null
     }
-    val badge: (@Composable () -> Unit)? = when {
-        isTarget && s.phase == Phase.CONNECTING -> @Composable { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) }
-        !d.trusted -> @Composable {
-            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer) { Icon(Icons.Rounded.Link, "Novo", Modifier.padding(3.dp).size(14.dp)) }
-        }
-        else -> null
-    }
+    val connecting = isTarget && s.phase == Phase.CONNECTING
     Box(Modifier.clickable(onClick = onTap).padding(4.dp)) {
         DeviceAvatar(
             d.name, d.tablet, ring = ring,
-            badge = badge,
+            badge = if (connecting || !d.trusted) ({ ChipBadge(connecting) }) else null,
         )
+    }
+}
+
+@Composable
+private fun ChipBadge(connecting: Boolean) {
+    if (connecting) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+    else Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer) {
+        Icon(Icons.Rounded.Link, "Novo", Modifier.padding(3.dp).size(14.dp))
     }
 }
 
