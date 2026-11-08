@@ -100,13 +100,13 @@ data class RippleParams(
 }
 
 /**
- * NameDrop-style handoff, full screen on BOTH devices at the moment of the bump.
+ * NameDrop-style handoff, full screen on BOTH devices, started at the same instant.
  *
- *  Sender   – the shared item (photo, PDF page, link card) is pulled into the notch while the
- *             glow charges there; at the release the ripple bursts out of the notch.
- *  Receiver – the glow charges at the top edge; at the release the ripple sweeps down and the
- *             same item springs out of the top, settles in the middle, and (for things that
- *             open directly) grows to fill the screen before the real viewer takes over.
+ *  Sender   – the shared items wait in a small stack; while the glow charges at the notch they
+ *             are pulled into it one after another, each with a pulse of light.
+ *  Receiver – the same items come out of the top edge one by one, at exactly the moments they
+ *             vanished on the sender. One item flies straight to full screen, already open;
+ *             several land in a grid and the first then grows into the gallery.
  *
  * Ripple math: port of the shockwave in Georgvm/iOS-NameDrop-Animation and
  * cyrilzakka/NameDrop (MIT), itself based on Shadertoy "llj3Dz".
@@ -121,6 +121,10 @@ class NameDropView(context: Context) : FrameLayout(context) {
     var onReleaseCue: (() -> Unit)? = null
     var releaseCueLead: Float = pt.johnny.bump.feedback.Feedback.RELEASE_SOUND_LEAD_SECONDS
     var onFinished: (() -> Unit)? = null
+    /** Receiver, direct-open: the item now fills the screen exactly like the viewer will show it. */
+    var onOpenMoment: (() -> Unit)?
+        get() = hero.onOpenMoment
+        set(v) { hero.onOpenMoment = v }
 
     private val overscan = dp(60f)
     private val stage = StageView(context)
@@ -162,7 +166,6 @@ class NameDropView(context: Context) : FrameLayout(context) {
 
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         super.onLayout(changed, l, t, r, b)
-        // The stage is larger than the screen so the distortion never samples past an edge.
         val o = overscan.toInt()
         stage.layout(-o, -o, width + o, height + o)
         val p = origin()
@@ -184,15 +187,21 @@ class NameDropView(context: Context) : FrameLayout(context) {
         requestLayout()
     }
 
-    fun setFile(name: String, mime: String) { hero.name = name; hero.mime = mime; hero.invalidate() }
-    fun setHeadline(title: String, subtitle: String) { hero.title = title; hero.subtitle = subtitle; hero.invalidate() }
-    fun setHeroImage(bitmap: Bitmap?) { if (bitmap != null) { hero.image = bitmap; hero.invalidate() } }
-    fun setProgress(value: Float) { hero.progress = value; hero.invalidate() }
-
-    /** Item arrived and opens directly: grow to fill the screen, then hand over to the real viewer. */
-    fun expandThen(then: () -> Unit) {
-        hero.expand(then)
+    /** The items, in transfer order. Only [Protocol.MAX_ITEMS] are animated; [extra] more show as "+N". */
+    fun setEntries(entries: List<Pair<String, String>>, extra: Int = 0) {
+        hero.setEntries(entries.ifEmpty { listOf("Ficheiro" to "") }, extra)
     }
+
+    fun setEntryImage(index: Int, bitmap: Bitmap?) { if (bitmap != null) hero.setImage(index, bitmap) }
+    fun markEntryDone(index: Int) = hero.markEntryDone(index)
+    fun setFile(name: String, mime: String) = hero.setFirst(name, mime)
+    fun setHeroImage(bitmap: Bitmap?) = setEntryImage(0, bitmap)
+    fun setLinkHost(host: String) = hero.setHost(host)
+    fun setDirectOpen(on: Boolean) { hero.directOpen = on; hero.invalidate() }
+    fun setHeadline(title: String, subtitle: String) { hero.title = title; hero.subtitle = subtitle; hero.invalidate() }
+    fun setProgress(value: Float) { hero.progress = value; hero.invalidate() }
+    val stagger: Float get() = hero.stagger
+    val entryCount: Int get() = hero.count
 
     fun showDone(subtitle: String, actionLabel: String?, onAction: (() -> Unit)?) {
         hero.subtitle = subtitle
@@ -219,7 +228,6 @@ class NameDropView(context: Context) : FrameLayout(context) {
 
     // ---------------------------------------------------------------- timeline
 
-    /** Charge → release → ripple. The hero layer runs its own spring clock from the same instants. */
     fun play() {
         timeline?.cancel()
         action.visibility = GONE
@@ -230,11 +238,12 @@ class NameDropView(context: Context) : FrameLayout(context) {
         alpha = 0f
         animate().alpha(1f).setDuration(220).setInterpolator(pt.johnny.bump.ui.theme.Motion.easeOutInterpolator()).start()
         hero.begin(p.chargeSeconds)
+        val total = max(p.totalSeconds, p.chargeSeconds + (hero.count - 1) * hero.stagger + 1.6f)
         if (!ValueAnimator.areAnimatorsEnabled()) {
             onReleaseCue?.invoke(); onChargeComplete?.invoke(); hero.release(); running = false; onFinished?.invoke(); return
         }
-        timeline = ValueAnimator.ofFloat(0f, p.totalSeconds).apply {
-            duration = (p.totalSeconds * 1000).toLong()
+        timeline = ValueAnimator.ofFloat(0f, total).apply {
+            duration = (total * 1000).toLong()
             interpolator = null
             addUpdateListener {
                 val t = it.animatedValue as Float
@@ -257,8 +266,8 @@ class NameDropView(context: Context) : FrameLayout(context) {
 
     private fun frame(t: Float, p: RippleParams) {
         var radius = 0f
-        val g: Float
-        val scale: Float
+        var g: Float
+        var scale: Float
         if (t < p.chargeSeconds) {
             val q = t / max(p.chargeSeconds, 0.001f)
             val eased = q * q * (3 - 2 * q)
@@ -270,6 +279,15 @@ class NameDropView(context: Context) : FrameLayout(context) {
             val fade = max(0f, 1 - u / GLOW_RELEASE)
             g = fade * fade
             scale = 1 + 0.8f * min(1f, u / GLOW_RELEASE)
+            // One small pulse of light per following item: "sending… sending…".
+            for (i in 1 until hero.count) {
+                val d = u - i * hero.stagger
+                if (d in 0f..0.35f) {
+                    val k = (1 - d / 0.35f)
+                    val pulse = 0.55f * k * k
+                    if (pulse > g) { g = pulse; scale = 0.55f + 0.25f * (1 - k) }
+                }
+            }
         }
         glow.intensity = g * p.glowIntensity
         glow.diameter = width * 1.1f * p.glowSize * scale
@@ -408,30 +426,33 @@ class NameDropView(context: Context) : FrameLayout(context) {
         }
     }
 
-    // ---------------------------------------------------------------- hero (the shared item)
+    // ---------------------------------------------------------------- hero layer (the shared items)
 
     private class HeroLayer(context: Context) : View(context) {
+        class Entry(var name: String, var mime: String, var image: Bitmap? = null, var host: String = "", var done: Boolean = false)
+
         var role = Role.RECEIVER
         val origin = PointF()
         var startRect: RectF? = null
-        var image: Bitmap? = null
-        var name = "Ficheiro"
-        var mime = ""
+        var directOpen = false
         var title = ""
         var subtitle = ""
         var progress = -1f
-        /** Receiver: fly straight from the notch to full screen, already "open" (no resting card). */
-        var directOpen = false
+        var onOpenMoment: (() -> Unit)? = null
+
+        private var entries = mutableListOf(Entry("Ficheiro", ""))
+        private var extra = 0
+        val count: Int get() = entries.size
+        /** Same rule on both devices, so items vanish and appear at matching instants. */
+        val stagger: Float get() = if (count <= 1) 0f else (1.6f / count).coerceIn(0.16f, 0.30f)
 
         private var chargeS = 1.2f
         private var beganAt = 0L
         private var releasedAt = 0L
         private var doneAt = 0L
-        private var expandAt = 0L
         private var done = false
         private var error = false
-        private var onExpanded: (() -> Unit)? = null
-        private var expandedFired = false
+        private var openFired = false
 
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val text = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -440,45 +461,77 @@ class NameDropView(context: Context) : FrameLayout(context) {
         private val bold = Typeface.create("sans-serif", Typeface.BOLD)
         private val regular = Typeface.create("sans-serif", Typeface.NORMAL)
 
+        fun setEntries(list: List<Pair<String, String>>, more: Int) {
+            val old = entries
+            entries = list.take(pt.johnny.bump.link.Protocol.MAX_ITEMS).mapIndexed { i, (n, m) ->
+                Entry(n, m, old.getOrNull(i)?.image, old.getOrNull(i)?.host.orEmpty())
+            }.toMutableList()
+            extra = more.coerceAtLeast(0)
+            invalidate()
+        }
+        fun setImage(i: Int, b: Bitmap) { entries.getOrNull(i)?.image = b; invalidate() }
+        fun setFirst(name: String, mime: String) { entries[0].name = name; entries[0].mime = mime; invalidate() }
+        fun setHost(host: String) { entries[0].host = host; invalidate() }
+        fun markEntryDone(i: Int) { entries.getOrNull(i)?.done = true; invalidate() }
+
         fun begin(charge: Float) {
-            chargeS = charge; beganAt = System.nanoTime(); releasedAt = 0L; doneAt = 0L; expandAt = 0L
-            done = false; error = false; onExpanded = null; expandedFired = false; progress = -1f
+            chargeS = charge; beganAt = System.nanoTime(); releasedAt = 0L; doneAt = 0L
+            done = false; error = false; openFired = false; progress = -1f
             invalidate()
         }
         fun release() { if (releasedAt == 0L) releasedAt = System.nanoTime(); invalidate() }
         fun markDone() { done = true; doneAt = System.nanoTime(); invalidate() }
         fun markError() { error = true; release(); invalidate() }
-        fun expand(then: () -> Unit) { if (expandAt == 0L) { expandAt = System.nanoTime(); onExpanded = then }; invalidate() }
-        fun actionTop(): Float = restRect().bottom + dp(108f)
 
         private fun secs(from: Long) = if (from == 0L) -1f else (System.nanoTime() - from) / 1e9f
-        private fun kind() = Files.kind(name, mime)
-        private fun showsPicture() = image != null || kind() == Files.Kind.LINK
+        private fun kindOf(e: Entry) = Files.kind(e.name, e.mime)
+        private fun picture(e: Entry) = e.image != null || kindOf(e) == Files.Kind.LINK || kindOf(e) == Files.Kind.TEXT
+        private fun aspectOf(e: Entry): Float = e.image?.let { it.width.toFloat() / it.height }
+            ?: if (kindOf(e) == Files.Kind.LINK) 1.55f else 1f
 
-        private fun aspect(): Float = image?.let { (it.width.toFloat() / it.height).coerceIn(0.56f, 1.8f) }
-            ?: if (kind() == Files.Kind.LINK) 1.55f else 1f
+        // ---- geometry
 
-        private fun restRect(): RectF {
+        private fun restRect(e: Entry): RectF {
             val w = width.toFloat(); val h = height.toFloat()
-            val a = aspect()
-            var rw = if (showsPicture()) min(w * 0.74f, dp(440f)) else dp(132f)
+            val a = aspectOf(e).coerceIn(0.56f, 1.8f)
+            var rw = if (picture(e)) min(w * 0.74f, dp(440f)) else dp(132f)
             var rh = rw / a
-            val maxH = h * 0.46f
-            if (rh > maxH) { rh = maxH; rw = rh * a }
+            if (rh > h * 0.46f) { rh = h * 0.46f; rw = rh * a }
             val cy = h * 0.40f
             return RectF(w / 2 - rw / 2, cy - rh / 2, w / 2 + rw / 2, cy + rh / 2)
         }
 
-        /** The item fitted to the whole screen, like a viewer would show it. */
-        private fun fullRect(): RectF {
+        /** Fit to the whole window — the viewer uses the same rule, so the handover is invisible. */
+        private fun fullRect(e: Entry): RectF {
             val w = width.toFloat(); val h = height.toFloat()
-            if (!showsPicture()) return RectF(0f, 0f, w, h)
-            // Unclamped aspect: must match the viewer's ContentScale.Fit exactly for a seamless handover.
-            val a = image?.let { it.width.toFloat() / it.height } ?: aspect()
+            if (!picture(e)) return RectF(0f, 0f, w, h)
+            val a = aspectOf(e)
             var rw = w; var rh = w / a
             if (rh > h) { rh = h; rw = h * a }
             return RectF(w / 2 - rw / 2, h / 2 - rh / 2, w / 2 + rw / 2, h / 2 + rh / 2)
         }
+
+        private fun gridCells(): List<RectF> {
+            val total = count + if (extra > 0) 1 else 0
+            val cols = when { total <= 1 -> 1; total <= 4 -> 2; total <= 9 -> 3; else -> 4 }
+            val rows = (total + cols - 1) / cols
+            val gap = dp(10f)
+            val w = width.toFloat(); val h = height.toFloat()
+            val cell = min((min(w - dp(48f), dp(620f)) - gap * (cols - 1)) / cols, (h * 0.58f - gap * (rows - 1)) / rows)
+            val gw = cols * cell + (cols - 1) * gap
+            val gh = rows * cell + (rows - 1) * gap
+            val left = (w - gw) / 2; val top = h * 0.42f - gh / 2
+            return (0 until total).map { i ->
+                val r = i / cols; val c = i % cols
+                // Centre a short last row.
+                val inRow = if (r == rows - 1) total - r * cols else cols
+                val rowLeft = left + (gw - (inRow * cell + (inRow - 1) * gap)) / 2
+                RectF(rowLeft + c * (cell + gap), top + r * (cell + gap), rowLeft + c * (cell + gap) + cell, top + r * (cell + gap) + cell)
+            }
+        }
+
+        private fun gridBottom(): Float = if (count == 1) restRect(entries[0]).bottom else gridCells().maxOf { it.bottom }
+        fun actionTop(): Float = gridBottom() + dp(108f)
 
         override fun onDraw(c: Canvas) {
             if (width == 0 || beganAt == 0L) return
@@ -486,32 +539,47 @@ class NameDropView(context: Context) : FrameLayout(context) {
             if (more) postInvalidateOnAnimation()
         }
 
-        // ---- sender: the item is pulled into the notch during the charge
+        // ---- sender: a small stack, pulled into the notch one item at a time
 
         private fun drawSender(c: Canvas): Boolean {
             val tb = secs(beganAt)
-            val u = (tb / max(chargeS, 0.05f)).coerceIn(0f, 1f)
-            if (releasedAt == 0L || u < 1f) {
-                val start = startRect ?: restRect()
-                // A breath of anticipation, then an accelerating pull (ease-in: things leaving speed up).
-                val swell = 1f + 0.035f * sin(min(u / 0.3f, 1f) * PI.toFloat())
-                val k0 = ((u - 0.3f) / 0.7f).coerceIn(0f, 1f)
-                val k = k0 * k0 * k0
-                val dot = dp(20f)
-                val cx = lerp(start.centerX(), origin.x, k)
-                val cy = lerp(start.centerY(), origin.y, k)
-                // Stretch along the pull for a liquid feel.
+            val start = startRect ?: restRect(entries[0])
+            val dot = dp(20f)
+            var anyLeft = false
+            for (i in count - 1 downTo 0) { // item 0 on top
+                val arrive = chargeS + i * stagger            // vanishes into the notch now
+                val dur = if (i == 0) chargeS * 0.7f else 0.6f
+                val begin = arrive - dur
+                if (tb >= arrive) continue
+                anyLeft = true
+                val k0 = ((tb - begin) / dur).coerceIn(0f, 1f)
+                val k = k0 * k0 * k0 // things leaving accelerate
+                val fan = if (count > 1) i.coerceAtMost(2) else 0
+                val rot0 = floatArrayOf(0f, -6f, 6f)[fan]
+                val dx0 = floatArrayOf(0f, -dp(10f), dp(10f))[fan]
+                val swell = if (i == 0) 1f + 0.035f * sin(min((tb / chargeS) / 0.3f, 1f) * PI.toFloat()) else 1f
+                val sx = start.centerX() + dx0; val sy = start.centerY()
+                val cx = lerp(sx, origin.x, k); val cy = lerp(sy, origin.y, k)
                 val stretch = 1f + 0.18f * sin(k * PI.toFloat())
                 val rw = lerp(start.width() * swell, dot, k) / stretch
                 val rh = lerp(start.height() * swell, dot, k) * stretch
                 val rect = RectF(cx - rw / 2, cy - rh / 2, cx + rw / 2, cy + rh / 2)
-                val radius = lerp(dp(24f), min(rw, rh) / 2, k)
                 val a = 1f - smooth((k - 0.82f) / 0.18f)
-                drawItem(c, rect, radius, a)
-                return true
+                c.save()
+                c.rotate(rot0 * (1 - k), cx, cy)
+                drawItem(c, entries[i], rect, lerp(dp(24f), min(rw, rh) / 2, k), a, crop = count > 1)
+                c.restore()
             }
-            // After the release: a quiet status in the middle while the bytes travel.
-            val e = secs(releasedAt)
+            // Total count badge on the stack while it waits.
+            if (count + extra > 1 && tb < chargeS * 0.3f) {
+                val n = (count + extra).toString()
+                paint.color = Palette.ACCENT
+                c.drawCircle(start.right - dp(4f), start.top + dp(4f), dp(16f), paint)
+                label(c, n, start.right - dp(4f), start.top + dp(9f), 14f, Color.WHITE, bold, dp(30f))
+            }
+            if (releasedAt == 0L) return true
+            // After the last item has gone: a quiet status in the middle.
+            val e = secs(releasedAt) - (count - 1) * stagger
             val a = pt.johnny.bump.ui.theme.Motion.easeOut((e - 0.5f) / 0.6f)
             if (a > 0f) {
                 val w = width.toFloat(); val cy = height * 0.46f
@@ -527,78 +595,101 @@ class NameDropView(context: Context) : FrameLayout(context) {
                     if (progress > 0f) { paint.color = white(a); c.drawRoundRect(w / 2 - bw / 2, y, w / 2 - bw / 2 + bw * progress.coerceIn(0f, 1f), y + dp(4f), dp(2f), dp(2f), paint) }
                 }
             }
-            return e < 1.2f || (done && secs(doneAt) < 0.8f) || !done
+            return anyLeft || e < 1.2f || (done && secs(doneAt) < 0.8f) || !done
         }
 
-        // ---- receiver: the item springs out of the top and settles
+        // ---- receiver: out of the top, one by one
 
         private fun drawReceiver(c: Canvas): Boolean {
             if (releasedAt == 0L) return false
             val e = secs(releasedAt)
-            if (directOpen) {
-                // Out of the notch and straight to the open, full-screen view of the item.
-                val m = pt.johnny.bump.ui.theme.Motion.springStep(e, 0.55f, 0.86f)
-                val dot = dp(20f)
-                val tiny = RectF(origin.x - dot / 2, origin.y - dot / 2, origin.x + dot / 2, origin.y + dot / 2)
-                val rect = lerpRect(tiny, fullRect(), m)
-                val radius = lerp(dot / 2, 0f, m.coerceIn(0f, 1f))
-                drawItem(c, rect, radius, pt.johnny.bump.ui.theme.Motion.easeOut(e / 0.12f))
-                if (progress in 0f..0.999f) {
-                    paint.color = white(.85f)
-                    c.drawRect(0f, 0f, width * progress, dp(3f), paint)
-                }
-                return e < 1.4f
-            }
-            val rest = restRect()
-            val m = pt.johnny.bump.ui.theme.Motion.springStep(e, 0.62f, 0.72f)
             val dot = dp(20f)
             val tiny = RectF(origin.x - dot / 2, origin.y - dot / 2, origin.x + dot / 2, origin.y + dot / 2)
-            var rect = lerpRect(tiny, rest, m)
-            var radius = lerp(dot / 2, dp(26f), m.coerceIn(0f, 1f))
-            val a = pt.johnny.bump.ui.theme.Motion.easeOut(e / 0.18f)
-            var labels = pt.johnny.bump.ui.theme.Motion.easeOut((e - 0.3f) / 0.45f)
-            var expanding = false
-            if (expandAt != 0L) {
-                val se = secs(expandAt)
-                val q = pt.johnny.bump.ui.theme.Motion.springStep(se, 0.5f, 0.92f)
-                rect = lerpRect(rest, fullRect(), q)
-                radius = lerp(dp(26f), 0f, q.coerceIn(0f, 1f))
-                labels *= 1f - (q * 3f).coerceIn(0f, 1f)
-                expanding = true
-                if (!expandedFired && se > 0.42f) { expandedFired = true; post { onExpanded?.invoke() } }
-            }
-            drawItem(c, rect, radius, a)
+            val single = count == 1 && extra == 0
+            val cells = if (single) emptyList() else gridCells()
+            val landedAll = (count - 1) * stagger + 0.55f
+            // Several items + direct open: after they land, the first grows into the gallery.
+            val expandAt = landedAll + 0.35f
+            val q = if (!single && directOpen && e > expandAt) pt.johnny.bump.ui.theme.Motion.springStep(e - expandAt, 0.5f, 0.92f) else 0f
 
-            if (!expanding && labels > 0f) {
-                when {
-                    error -> ring(c, rect, radius, 1f, Palette.DANGER, labels)
-                    done -> drawBadge(c, rect.right - dp(6f), rect.bottom - dp(6f), dp(19f), labels, Palette.SUCCESS, true, secs(doneAt))
-                    progress >= 0f -> { ring(c, rect, radius, 1f, Color.WHITE, .22f * labels); ring(c, rect, radius, progress, Color.WHITE, labels) }
+            for (i in 0 until count) {
+                val ei = e - i * stagger
+                if (ei < 0f) continue
+                val entry = entries[i]
+                val target = when {
+                    single && directOpen -> fullRect(entry)
+                    single -> restRect(entry)
+                    else -> cells[i]
                 }
-                val w = width.toFloat()
-                val maxW = w - dp(48f)
-                label(c, title, w / 2, rest.bottom + dp(48f), 21f, white(labels), bold, maxW)
-                label(c, name, w / 2, rest.bottom + dp(74f), 15f, white(.9f * labels), regular, maxW)
-                label(c, subtitle, w / 2, rest.bottom + dp(97f), 13f, if (error) withAlpha(Palette.DANGER, labels) else white(.65f * labels), regular, maxW)
+                val m = pt.johnny.bump.ui.theme.Motion.springStep(ei, 0.55f, if (single && directOpen) 0.86f else 0.74f)
+                val endRadius = if (single && directOpen) 0f else if (single) dp(26f) else dp(16f)
+                var rect = lerpRect(tiny, target, m)
+                var radius = lerp(dot / 2, endRadius, m.coerceIn(0f, 1f))
+                var a = pt.johnny.bump.ui.theme.Motion.easeOut(ei / 0.12f)
+                if (q > 0f) {
+                    if (i == 0) continue // drawn last, on top
+                    a *= 1f - q.coerceIn(0f, 1f)
+                }
+                drawItem(c, entry, rect, radius, a, crop = !single)
+                if (!single && entry.done && q == 0f) drawBadge(c, rect.right - dp(4f), rect.bottom - dp(4f), dp(12f), a, Palette.SUCCESS, true, 1f)
             }
-            return e < 1.6f || expanding && secs(expandAt) < 1.2f || done && secs(doneAt) < 0.8f
+            if (extra > 0 && !single) {
+                val ei = e - count * stagger
+                if (ei > 0f) {
+                    val r = lerpRect(tiny, cells[count], pt.johnny.bump.ui.theme.Motion.springStep(ei, 0.55f, 0.74f))
+                    paint.color = white(.16f * (1f - q)); c.drawRoundRect(r, dp(16f), dp(16f), paint)
+                    label(c, "+$extra", r.centerX(), r.centerY() + dp(8f), 22f, white(1f - q), bold, r.width())
+                }
+            }
+            if (q > 0f) {
+                val r = lerpRect(cells[0], fullRect(entries[0]), q)
+                drawItem(c, entries[0], r, lerp(dp(16f), 0f, q.coerceIn(0f, 1f)), 1f, crop = q < 0.6f)
+                if (!openFired && e - expandAt > 0.42f) { openFired = true; post { onOpenMoment?.invoke() } }
+            }
+            if (single && directOpen && !openFired && e > 0.55f) { openFired = true; post { onOpenMoment?.invoke() } }
+
+            // Progress / labels
+            if (directOpen) {
+                if (progress in 0f..0.999f) { paint.color = white(.85f); c.drawRect(0f, 0f, width * progress, dp(3f), paint) }
+            } else {
+                val labels = pt.johnny.bump.ui.theme.Motion.easeOut((e - landedAll + 0.25f) / 0.45f)
+                if (labels > 0f) {
+                    if (single) {
+                        val rect = restRect(entries[0])
+                        when {
+                            error -> ring(c, rect, dp(26f), 1f, Palette.DANGER, labels)
+                            done -> drawBadge(c, rect.right - dp(6f), rect.bottom - dp(6f), dp(19f), labels, Palette.SUCCESS, true, secs(doneAt))
+                            progress >= 0f -> { ring(c, rect, dp(26f), 1f, Color.WHITE, .22f * labels); ring(c, rect, dp(26f), progress, Color.WHITE, labels) }
+                        }
+                    } else if (!done && progress in 0f..0.999f) {
+                        val bw = dp(200f); val y = gridBottom() + dp(16f); val w = width.toFloat()
+                        paint.color = white(.22f * labels); c.drawRoundRect(w / 2 - bw / 2, y, w / 2 + bw / 2, y + dp(4f), dp(2f), dp(2f), paint)
+                        paint.color = white(labels); c.drawRoundRect(w / 2 - bw / 2, y, w / 2 - bw / 2 + bw * progress, y + dp(4f), dp(2f), dp(2f), paint)
+                    }
+                    val w = width.toFloat(); val maxW = w - dp(48f); val base = gridBottom()
+                    label(c, title, w / 2, base + dp(48f), 21f, white(labels), bold, maxW)
+                    label(c, if (single) entries[0].name else "${count + extra} itens", w / 2, base + dp(74f), 15f, white(.9f * labels), regular, maxW)
+                    label(c, subtitle, w / 2, base + dp(97f), 13f, if (error) withAlpha(Palette.DANGER, labels) else white(.65f * labels), regular, maxW)
+                }
+            }
+            return e < landedAll + 1.6f || (done && secs(doneAt) < 0.8f)
         }
 
         // ---- pieces
 
-        private fun drawItem(c: Canvas, rect: RectF, radius: Float, a: Float) {
+        private fun drawItem(c: Canvas, e: Entry, rect: RectF, radius: Float, a: Float, crop: Boolean) {
             if (a <= 0.003f || rect.width() < 1f) return
             val alpha = (a.coerceIn(0f, 1f) * 255).toInt()
-            paint.setShadowLayer(dp(26f), 0f, dp(12f), Color.argb((alpha * .4f).toInt(), 0, 0, 0))
+            paint.setShadowLayer(dp(22f), 0f, dp(10f), Color.argb((alpha * .38f).toInt(), 0, 0, 0))
             paint.color = Color.argb(alpha, 250, 251, 255)
             c.drawRoundRect(rect, radius, radius, paint)
             paint.clearShadowLayer()
-            val b = image
-            val kind = kind()
+            val b = e.image
+            val kind = kindOf(e)
             when {
                 b != null -> {
                     val m = Matrix()
-                    val s = max(rect.width() / b.width, rect.height() / b.height)
+                    val s = if (crop) max(rect.width() / b.width, rect.height() / b.height) else max(rect.width() / b.width, rect.height() / b.height)
                     m.setScale(s, s)
                     m.postTranslate(rect.centerX() - b.width * s / 2, rect.centerY() - b.height * s / 2)
                     paint.shader = BitmapShader(b, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply { setLocalMatrix(m) }
@@ -607,14 +698,14 @@ class NameDropView(context: Context) : FrameLayout(context) {
                     paint.shader = null; paint.alpha = 255
                 }
                 kind == Files.Kind.LINK -> {
-                    val host = subtitleHost()
+                    val host = e.host.ifBlank { "link" }
                     val k = rect.width() / dp(300f)
                     if (k > 0.25f) {
                         paint.color = withAlpha(Palette.ACCENT, a)
                         c.drawCircle(rect.centerX(), rect.centerY() - rect.height() * .14f, rect.height() * .16f, paint)
                         label(c, host.take(1).uppercase(), rect.centerX(), rect.centerY() - rect.height() * .14f + rect.height() * .06f, 26f * k, withAlpha(Color.WHITE, a), bold, rect.width())
                         label(c, host, rect.centerX(), rect.centerY() + rect.height() * .2f, 17f * k, withAlpha(Palette.INK, a), medium, rect.width() - dp(20f) * k)
-                        label(c, name, rect.centerX(), rect.centerY() + rect.height() * .33f, 12f * k, withAlpha(Palette.MUTED, a), regular, rect.width() - dp(24f) * k)
+                        label(c, e.name, rect.centerX(), rect.centerY() + rect.height() * .33f, 12f * k, withAlpha(Palette.MUTED, a), regular, rect.width() - dp(24f) * k)
                     }
                 }
                 else -> {
@@ -626,10 +717,6 @@ class NameDropView(context: Context) : FrameLayout(context) {
                 }
             }
         }
-
-        /** Host to show on a link card: stored in [name] as "title" and in [linkHost]. */
-        var linkHost = ""
-        private fun subtitleHost() = linkHost.ifBlank { "link" }
 
         private fun ring(c: Canvas, rect: RectF, radius: Float, fraction: Float, color: Int, a: Float) {
             if (fraction <= 0f) return
@@ -691,12 +778,6 @@ class NameDropView(context: Context) : FrameLayout(context) {
             c.drawText(s, x, y, text)
         }
     }
-
-    fun setLinkHost(host: String) { hero.linkHost = host; hero.invalidate() }
-    fun setDirectOpen(on: Boolean) { hero.directOpen = on; hero.invalidate() }
-
-    /** Where the item sits when fully open (fit to the whole window) — the viewer uses the same rule. */
-    val openSettleSeconds get() = 0.55f
 
     companion object {
         private const val GLOW_RELEASE = 0.35f

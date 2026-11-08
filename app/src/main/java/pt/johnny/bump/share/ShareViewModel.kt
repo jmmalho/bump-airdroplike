@@ -30,7 +30,7 @@ enum class Phase { PREPARING, PERMISSIONS, RADIOS_OFF, SEARCHING, CONNECTING, PA
 /** What the user shared: files, a web page (Chrome), or plain text. */
 sealed interface ShareInput {
     data class Items(val uris: List<Uri>) : ShareInput
-    data class Link(val url: String, val title: String) : ShareInput
+    data class Link(val url: String, val title: String, val browser: String = "") : ShareInput
     data class Text(val text: String) : ShareInput
 }
 
@@ -63,6 +63,9 @@ data class ShareState(
     val weakSignal: Boolean = false,
     /** Large preview shown above the sheet and flown into the notch at the bump. */
     val preview: android.graphics.Bitmap? = null,
+    /** One preview per item (first [Protocol.MAX_ITEMS]); null where none can be made. */
+    val previews: List<android.graphics.Bitmap?> = emptyList(),
+    val items: List<Pair<String, String>> = emptyList(),
     val linkHost: String = "",
 )
 
@@ -78,7 +81,10 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
     private var staged: List<LocalFile> = emptyList()
     private var linkItem: Msg.Link? = null
     private var textItem: Msg.Text? = null
-    private var previewJpeg: ByteArray? = null
+    private var previewJpegs: List<ByteArray?> = emptyList()
+    private var previewsAcked = 0
+    private var pendingReason: String? = null
+    private val readyTimeout = Runnable { pendingReason?.let { pendingReason = null; fire(it) } }
     private var previewSentTo: String? = null
     private val hasContent get() = staged.isNotEmpty() || linkItem != null || textItem != null
     private var link: NearbyLink? = null
@@ -109,7 +115,7 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
         when (input) {
             is ShareInput.Link -> {
                 val host = runCatching { Uri.parse(input.url).host.orEmpty().removePrefix("www.") }.getOrDefault("")
-                linkItem = Msg.Link(input.url, input.title.ifBlank { host }.take(200))
+                linkItem = Msg.Link(input.url, input.title.ifBlank { host }.take(200), input.browser)
                 _state.update { it.copy(fileCount = 1, firstName = input.title.ifBlank { host }, firstMime = Files.LINK_MIME, linkHost = host) }
                 begin()
                 return
@@ -136,12 +142,20 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
         io.execute {
             try {
                 val files = uris.map { Files.stage(ctx, it) }
-                val preview = Previews.render(ctx, first, files.first())
-                val jpeg = preview?.let { Previews.jpeg(it) }
+                val single = files.size == 1
+                val shown = files.take(pt.johnny.bump.link.Protocol.MAX_ITEMS)
+                // Big preview for one item; smaller ones for a batch (they travel before the bump).
+                val bitmaps = shown.mapIndexed { i, f -> Previews.render(ctx, uris[i], f, if (single) 1080 else 640) }
+                val jpegs = bitmaps.map { b -> b?.let { Previews.jpeg(it, if (single) 720 else 420) } }
                 main.post {
                     staged = files
-                    previewJpeg = jpeg
-                    _state.update { it.copy(totalBytes = files.sumOf { f -> f.size }, preview = preview) }
+                    previewJpegs = jpegs
+                    _state.update {
+                        it.copy(
+                            totalBytes = files.sumOf { f -> f.size }, preview = bitmaps.firstOrNull(), previews = bitmaps,
+                            items = shown.map { f -> f.name to f.mime },
+                        )
+                    }
                     begin()
                 }
             } catch (e: Exception) {
@@ -196,16 +210,20 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
         triggered = false
         matcher.reset()
         rssi = RssiGate(app.settings.current.rssiThreshold)
-        val first = staged.firstOrNull()
         when {
-            first != null -> l.send(Msg.Arm(staged.size, staged.sumOf { it.size }, first.name, first.mime))
-            linkItem != null -> l.send(Msg.Arm(1, 0, _state.value.linkHost.ifBlank { "link" }, Files.LINK_MIME))
-            textItem != null -> l.send(Msg.Arm(1, textItem!!.text.length.toLong(), "Texto", Files.TEXT_MIME))
+            staged.isNotEmpty() -> l.send(Msg.Arm(staged.size, staged.sumOf { it.size },
+                staged.take(pt.johnny.bump.link.Protocol.MAX_ITEMS).map { Msg.Item(it.name, it.mime, it.size) }))
+            linkItem != null -> l.send(Msg.Arm(1, 0, listOf(Msg.Item(_state.value.linkHost.ifBlank { "link" }, Files.LINK_MIME, 0))))
+            textItem != null -> l.send(Msg.Arm(1, textItem!!.text.length.toLong(), listOf(Msg.Item("Texto", Files.TEXT_MIME, 0))))
             else -> return
         }
-        // Push the preview now, silently, so it is already on the other side when they touch.
+        // Push the previews now, silently, so they are already on the other side when they touch.
         val peer = l.peer?.id
-        if (previewJpeg != null && previewSentTo != peer) { l.sendPreview(previewJpeg!!); previewSentTo = peer }
+        if (previewSentTo != peer) {
+            previewsAcked = 0
+            previewJpegs.forEachIndexed { i, j -> if (j != null) l.sendPreview(i, j) }
+            previewSentTo = peer
+        }
         if (motion.available) motion.start(app.settings.senderThreshold())
         main.removeCallbacks(syncLoop)
         main.postDelayed(syncLoop, 1200)
@@ -243,14 +261,37 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
         if (triggered || !l.authenticated || !hasContent) return
         triggered = true
         motion.stop(); beacon.stopScan(); main.removeCallbacks(syncLoop)
-        l.send(Msg.Go(reason))
-        // Charge hum now, release tick + sound when the ripple bursts (same timeline as the receiver).
-        app.feedback.playCharge(ripple.chargeSeconds)
-        val leadMs = ((ripple.chargeSeconds - pt.johnny.bump.feedback.Feedback.RELEASE_SOUND_LEAD_SECONDS) * 1000).toLong().coerceAtLeast(0)
-        main.postDelayed({ app.feedback.play(Cue.BUMP) }, leadMs)
         main.removeCallbacks(nobodyTimeout)
-        sendStartedAt = SystemClock.elapsedRealtime()
-        _state.update { it.copy(phase = Phase.SENDING, title = "A enviar", hint = "", progress = 0f, waveTick = it.waveTick + 1) }
+        // Only pull into the notch once the tablet can show the items instantly (previews acknowledged).
+        val expected = previewJpegs.count { it != null }
+        if (previewsAcked >= expected) fire(reason)
+        else { pendingReason = reason; main.postDelayed(readyTimeout, 700) }
+    }
+
+    private fun onPreviewAck(count: Int) {
+        previewsAcked = count
+        val r = pendingReason ?: return
+        if (count >= previewJpegs.count { it != null }) { pendingReason = null; main.removeCallbacks(readyTimeout); fire(r) }
+    }
+
+    /**
+     * Both screens start at the same physical instant: a short lead (covering the message latency)
+     * converted into the tablet's clock via the measured offset. Bytes start flowing right away.
+     */
+    private fun fire(reason: String) {
+        val l = link ?: return
+        val sync = l.clock.best()
+        val leadMs = if (sync != null) (sync.rttNanos / 1_000_000 * 3 / 2 + 80).coerceIn(120, 400) else 250L
+        val startLocal = SystemClock.elapsedRealtimeNanos() + leadMs * 1_000_000
+        l.send(Msg.Go(reason, if (sync != null) startLocal + sync.offsetNanos else 0L))
+        sendStartedAt = SystemClock.elapsedRealtime() + leadMs
+        main.postDelayed({
+            // Charge hum now, release tick + sound when the ripple bursts (same timeline as the receiver).
+            app.feedback.playCharge(ripple.chargeSeconds)
+            val soundMs = ((ripple.chargeSeconds - pt.johnny.bump.feedback.Feedback.RELEASE_SOUND_LEAD_SECONDS) * 1000).toLong().coerceAtLeast(0)
+            main.postDelayed({ app.feedback.play(Cue.BUMP) }, soundMs)
+            _state.update { it.copy(phase = Phase.SENDING, title = "A enviar", hint = "", progress = 0f, waveTick = it.waveTick + 1) }
+        }, leadMs)
         val peerName = l.peer?.name.orEmpty()
         val linkMsg = linkItem; val textMsg = textItem
         when {
@@ -308,6 +349,7 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
                 if (!ok) beacon.stopScan()
             }
             is Msg.Knock -> onPeerKnock(msg)
+            is Msg.PreviewAck -> onPreviewAck(msg.count)
             else -> Unit
         }
     }
@@ -318,7 +360,9 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
 
     override fun onSendFinished(count: Int) {
         // Finish only once the card has risen behind the ripple, even if a small file was instant.
-        val cardVisibleMs = ((ripple.chargeSeconds + ripple.rippleSeconds * 0.3f + 0.55f) * 1000).toLong()
+        val n = staged.size.coerceIn(1, pt.johnny.bump.link.Protocol.MAX_ITEMS)
+        val stagger = if (n <= 1) 0f else (1.6f / n).coerceIn(0.16f, 0.30f)
+        val cardVisibleMs = ((ripple.chargeSeconds + (n - 1) * stagger + ripple.rippleSeconds * 0.3f + 0.55f) * 1000).toLong()
         val wait = (cardVisibleMs - (SystemClock.elapsedRealtime() - sendStartedAt)).coerceAtLeast(0)
         main.postDelayed({
             _state.update { it.copy(phase = Phase.SENT, progress = 1f, title = if (count > 1) "$count ficheiros enviados" else "Enviado") }
@@ -330,6 +374,7 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
         val s = _state.value
         if (s.phase == Phase.SENT) return
         motion.stop(); beacon.stopScan(); main.removeCallbacks(syncLoop)
+        previewSentTo = null // the receiver forgets previews when it re-arms
         if (s.phase == Phase.SENDING) { error("A ligação caiu antes de terminar."); return }
         _state.update { it.copy(phase = Phase.SEARCHING, target = null) }
         link?.startDiscovery()

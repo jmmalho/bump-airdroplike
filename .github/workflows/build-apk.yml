@@ -30,22 +30,38 @@ jobs:
         with:
           gradle-version: '8.14.3'
 
+      - name: Permanent signing key
+        env:
+          KS: ${{ secrets.BUMP_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KS" ]; then
+            echo "$KS" | base64 -d > "$RUNNER_TEMP/bump.jks"
+            echo "BUMP_KEYSTORE_FILE=$RUNNER_TEMP/bump.jks" >> "$GITHUB_ENV"
+            echo "Signing with the permanent BUMP key: APKs update in place."
+          else
+            echo "::warning::Secret BUMP_KEYSTORE_BASE64 em falta: APK assinada com chave temporária (não atualiza por cima)."
+          fi
+
       - name: Unit tests (bump detection, clock sync, protocol)
         run: gradle --no-daemon --stacktrace :app:testDebugUnitTest
 
       - name: Build APKs
+        env:
+          BUMP_KEYSTORE_PASSWORD: ${{ secrets.BUMP_KEYSTORE_PASSWORD }}
+          BUMP_KEY_ALIAS: ${{ secrets.BUMP_KEY_ALIAS }}
+          BUMP_KEY_PASSWORD: ${{ secrets.BUMP_KEY_PASSWORD }}
         run: gradle --no-daemon --stacktrace :app:assembleDebug :app:assembleRelease
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: BUMP-debug-APK
+          name: BUMP-debug-APK-${{ github.run_number }}
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
       - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
-          name: BUMP-release-APK
+          name: BUMP-release-APK-${{ github.run_number }}
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error

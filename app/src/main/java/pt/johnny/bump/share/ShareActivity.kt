@@ -121,11 +121,16 @@ class ShareActivity : ComponentActivity() {
         val subject = i.getStringExtra(Intent.EXTRA_SUBJECT).orEmpty()
         val url = pt.johnny.bump.link.Protocol.findUrl(text)
         return when {
-            url != null -> ShareInput.Link(url, subject.ifBlank { text.replace(url, "").trim().take(120) })
+            // Open it on the other side in the same browser it came from (Chrome → Chrome).
+            url != null -> ShareInput.Link(url, subject.ifBlank { text.replace(url, "").trim().take(120) }, sourcePackage())
             text.isNotBlank() -> ShareInput.Text(text)
             else -> ShareInput.Items(emptyList())
         }
     }
+
+    /** The app that shared to us, e.g. com.android.chrome (from the activity referrer). */
+    private fun sourcePackage(): String =
+        referrer?.takeIf { it.scheme == "android-app" }?.host?.takeIf { it != packageName }.orEmpty()
 
     @Suppress("DEPRECATION")
     private fun sharedUris(i: Intent?): List<Uri> {
@@ -256,15 +261,22 @@ private fun ShareSheet(vm: ShareViewModel, onClose: () -> Unit) {
                     NameDropView(c).apply {
                         params = vm.ripple
                         configure(NameDropView.Role.SENDER, notchPoint(hostView), heroRect)
-                        setFile(s.firstName, s.firstMime)
-                        setLinkHost(s.linkHost)
-                        setHeroImage(s.preview)
+                        if (s.items.isNotEmpty()) {
+                            setEntries(s.items, (s.fileCount - s.items.size).coerceAtLeast(0))
+                            s.previews.forEachIndexed { i, b -> setEntryImage(i, b) }
+                        } else {
+                            setFile(s.firstName, s.firstMime)
+                            setLinkHost(s.linkHost)
+                        }
                         setHeadline("A enviar", "Para ${s.target?.name ?: "outro dispositivo"}")
                         play()
                     }
                 },
                 update = { v ->
-                    v.setHeadline(if (s.phase == Phase.SENT) "Enviado" else "A enviar", "Para ${s.target?.name ?: "outro dispositivo"}")
+                    v.setHeadline(
+                        if (s.phase == Phase.SENT) (if (s.fileCount > 1) "${s.fileCount} enviados" else "Enviado") else "A enviar",
+                        "Para ${s.target?.name ?: "outro dispositivo"}",
+                    )
                     if (s.progress > 0f) v.setProgress(s.progress)
                     when (s.phase) {
                         Phase.SENT -> if (v.tag != "done") { v.tag = "done"; v.showDone("Para ${s.target?.name ?: "outro dispositivo"}", null, null) }
@@ -295,6 +307,28 @@ private fun HeroPreview(s: ShareState, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(24.dp)
     val bmp = s.preview
     when {
+        s.fileCount > 1 -> Box(modifier.widthIn(max = 300.dp).fillMaxWidth(0.62f).aspectRatio(1f)) {
+            // A small fanned stack: what will be pulled into the notch, one by one.
+            val shown = (0 until minOf(3, s.fileCount)).reversed()
+            for (i in shown) {
+                val rot = floatArrayOf(0f, -6f, 6f)[i]
+                val dx = floatArrayOf(0f, -10f, 10f)[i]
+                Box(
+                    Modifier.fillMaxSize().graphicsLayer { rotationZ = rot; translationX = dx * density }
+                        .shadow(18.dp, shape).clip(shape).background(Color.White),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val b = s.previews.getOrNull(i)
+                    val item = s.items.getOrNull(i)
+                    if (b != null) androidx.compose.foundation.Image(b.asImageBitmap(), null, contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    else if (item != null) pt.johnny.bump.ui.KindTile(item.first, item.second, size = 96.dp)
+                }
+            }
+            Box(
+                Modifier.align(Alignment.TopEnd).size(34.dp).background(Brand.Blue, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) { Text("${s.fileCount}", color = Color.White, style = MaterialTheme.typography.labelLarge) }
+        }
         bmp != null -> {
             val ratio = (bmp.width.toFloat() / bmp.height).coerceIn(0.56f, 1.8f)
             androidx.compose.foundation.Image(

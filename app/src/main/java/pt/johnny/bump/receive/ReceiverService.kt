@@ -68,12 +68,15 @@ class ReceiverService : Service(), NearbyLink.Listener {
     private var windowManager: WindowManager? = null
     private var overlay: NameDropView? = null
     private var peerName: String? = null
-    /** Preview the sender pushed before the bump, so the item can appear the instant they touch. */
-    private var preview: android.graphics.Bitmap? = null
+    /** Previews the sender pushed before the bump, so items can appear the instant they touch. */
+    private val previews = arrayOfNulls<android.graphics.Bitmap>(pt.johnny.bump.link.Protocol.MAX_ITEMS)
+    private var armItems: List<Msg.Item> = emptyList()
+    private var armCount = 1
     private var linkHost = ""
 
-    /** One bump = one session. `direct` means the item flies out of the notch already open. */
-    private class Session(val id: Long, val direct: Boolean, val inViewer: Boolean) {
+    /** One bump = one session. `direct` means the items fly out of the notch already open. */
+    private class Session(val id: Long, val direct: Boolean, val inViewer: Boolean, val count: Int) {
+        var saved = 0
         var landed = false
         var opened = false
         var pendingOpen: (() -> Unit)? = null
@@ -209,28 +212,32 @@ class ReceiverService : Service(), NearbyLink.Listener {
         when (msg) {
             is Msg.Arm -> arm(msg)
             Msg.Disarm -> disarm()
-            is Msg.Go -> incoming()
+            is Msg.Go -> scheduleIncoming(msg)
             is Msg.Link -> linkReceived(msg)
             is Msg.Text -> textReceived(msg)
             else -> Unit
         }
     }
 
-    override fun onPreview(jpeg: ByteArray) {
+    /** Previews arrive before the bump; each one is acknowledged so the sender knows we are ready. */
+    override fun onPreview(index: Int, jpeg: ByteArray) {
         Thread {
-            val opts = android.graphics.BitmapFactory.Options().apply { inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888 }
-            val b = runCatching { android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, opts) }.getOrNull()
+            val b = runCatching { android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) }.getOrNull()
             main.post {
-                if (b != null) {
-                    preview = b; overlay?.setHeroImage(b)
-                    session?.let { s -> Incoming.update(s.id) { it.copy(preview = b) } }
+                if (b != null && index in previews.indices) {
+                    previews[index] = b
+                    overlay?.setEntryImage(index, b)
+                    session?.let { s -> Incoming.updateEntry(s.id, index) { it.copy(preview = b) } }
                 }
+                link?.send(Msg.PreviewAck(previews.count { it != null }))
             }
         }.start()
     }
 
     private fun arm(m: Msg.Arm) {
-        preview = null
+        previews.fill(null)
+        armItems = m.items.ifEmpty { listOf(Msg.Item("Ficheiro", "", 0)) }
+        armCount = m.count.coerceAtLeast(armItems.size)
         linkHost = if (m.firstMime == Files.LINK_MIME) m.firstName else ""
         armed = true
         armedName = if (m.count > 1) "${m.count} ficheiros" else m.firstName
@@ -247,30 +254,47 @@ class ReceiverService : Service(), NearbyLink.Listener {
         main.removeCallbacks(disarmTimeout)
     }
 
-    private fun incoming() {
+    /** Start at the instant the sender asked for (our clock), so both screens move together. */
+    private fun scheduleIncoming(go: Msg.Go) {
         armed = false
         motion.stop()
         main.removeCallbacks(disarmTimeout)
-        publish("A receber $armedName")
-        waveStartedAt = SystemClock.elapsedRealtime()
-        val params = RippleParams.load(this)
-        val interactive = getSystemService(PowerManager::class.java)?.isInteractive == true
-        val kind = Files.kind(armedName, armedMime)
-        val direct = app.settings.current.autoOpen && Files.opensDirectly(armedName, armedMime) &&
-            !locked() && interactive && Permissions.overlayGranted(this)
-        val inViewer = direct && kind in setOf(Files.Kind.IMAGE, Files.Kind.VIDEO, Files.Kind.PDF)
-        val s = Session(SystemClock.elapsedRealtimeNanos(), direct, inViewer)
-        session = s
-        Incoming.start(Incoming.Item(s.id, armedName, armedMime, peerName ?: "outro dispositivo", preview))
-        app.feedback.playCharge(params.chargeSeconds)
-        showOverlay(params, direct)
-        overlay?.onChargeComplete = {
-            // The item reaches full screen ~0.55 s after the release: that is the "open" moment.
-            main.postDelayed({ landed(s) }, 550)
-        }
+        val delayMs = if (go.startAtNanos > 0) ((go.startAtNanos - SystemClock.elapsedRealtimeNanos()) / 1_000_000).coerceIn(0, 700) else 0
+        // The session exists from now on (a link or file may arrive before the animation starts).
+        val s = newSession()
+        waveStartedAt = SystemClock.elapsedRealtime() + delayMs
+        main.postDelayed({ incoming(s) }, delayMs)
     }
 
-    /** The item now fills the screen. Viewer types: slide the real viewer in underneath, then lift the overlay. */
+    private fun newSession(): Session {
+        val interactive = getSystemService(PowerManager::class.java)?.isInteractive == true
+        val kinds = armItems.map { Files.kind(it.name, it.mime) }
+        val viewerKinds = setOf(Files.Kind.IMAGE, Files.Kind.VIDEO, Files.Kind.PDF)
+        val single = armCount == 1
+        val canOpen = app.settings.current.autoOpen && !locked() && interactive && Permissions.overlayGranted(this)
+        val first = armItems.firstOrNull() ?: Msg.Item("Ficheiro", "", 0)
+        val direct = canOpen && if (single) Files.opensDirectly(first.name, first.mime) else kinds.isNotEmpty() && kinds.all { it in viewerKinds }
+        val inViewer = direct && (!single || Files.kind(first.name, first.mime) in viewerKinds)
+        val s = Session(SystemClock.elapsedRealtimeNanos(), direct, inViewer, armCount)
+        session = s
+        val entries = (0 until armCount).map { i ->
+            val it = armItems.getOrNull(i)
+            Incoming.Entry(it?.name ?: "Ficheiro ${i + 1}", it?.mime.orEmpty(), previews.getOrNull(i))
+        }
+        Incoming.start(Incoming.Item(s.id, peerName ?: "outro dispositivo", entries))
+        return s
+    }
+
+    private fun incoming(s: Session) {
+        if (session !== s) return
+        publish("A receber $armedName")
+        val params = RippleParams.load(this)
+        app.feedback.playCharge(params.chargeSeconds)
+        showOverlay(params, s.direct)
+        overlay?.onOpenMoment = { landed(s) }
+    }
+
+    /** The item now fills the screen (or the first of several did). Hand over without a visible cut. */
     private fun landed(s: Session) {
         if (session !== s || !s.direct) return
         s.landed = true
@@ -278,64 +302,69 @@ class ReceiverService : Service(), NearbyLink.Listener {
         if (s.inViewer) {
             s.opened = true
             runCatching { startActivity(pt.johnny.bump.ui.viewer.ViewerActivity.intent(this, s.id)) }
-            main.postDelayed({ hideOverlay() }, 450) // let the viewer draw its first frame first
+            main.postDelayed({ hideOverlay() }, 600) // let the viewer draw its first frame underneath
         } else {
-            s.pendingOpen?.let { open -> s.opened = true; open(); main.postDelayed({ hideOverlay() }, 380) }
+            s.pendingOpen?.let { open -> s.opened = true; open(); main.postDelayed({ hideOverlay() }, 700) }
         }
     }
 
     private fun locked() = getSystemService(android.app.KeyguardManager::class.java)?.isKeyguardLocked == true
 
-    /**
-     * Shared finish for files and links: wait until the item has landed on screen, then either
-     * grow it to full screen and open it (photos, videos, PDFs, links) or show it with a button.
-     */
-    private fun deliver(name: String, mime: String, detail: String, open: () -> Unit) {
-        val s = session
-        if (s != null && s.direct) {
-            when {
-                s.inViewer -> Unit // the viewer is (or will be) open and swaps in the full file itself
-                s.landed && !s.opened -> { s.opened = true; open(); main.postDelayed({ hideOverlay() }, 380) }
-                else -> s.pendingOpen = open
-            }
+    /** Opened straight from here while our overlay is on screen (Android 15 only allows it then). */
+    private fun openItem(uri: Uri, name: String, mime: String) {
+        if (mime == Files.APK_MIME) { // installer needs the confirmation dialog
+            runCatching { startActivity(OpenFileActivity.intent(this, uri, name, mime).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             return
         }
+        val view = Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        runCatching { startActivity(view) }.onFailure {
+            runCatching { startActivity(OpenFileActivity.intent(this, uri, name, mime).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        }
+    }
+
+    /** Same browser it was shared from (Chrome → Chrome), else the default one. */
+    private fun openLink(url: String, browser: String) {
+        val base = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (browser.isNotBlank()) {
+            try { startActivity(Intent(base).setPackage(browser)); return } catch (_: android.content.ActivityNotFoundException) { }
+        }
+        runCatching { startActivity(base) }
+    }
+
+    /** Items that are not opened directly: show them settled with a button once everything arrived. */
+    private fun finishCalmly(s: Session, detail: String, label: String, open: () -> Unit) {
         val p = RippleParams.load(this)
-        val landedMs = ((p.chargeSeconds + 0.9f) * 1000).toLong()
+        val o = overlay
+        val landedMs = ((p.chargeSeconds + (o?.let { (it.entryCount - 1) * it.stagger } ?: 0f) + 0.9f) * 1000).toLong()
         val wait = (landedMs - (SystemClock.elapsedRealtime() - waveStartedAt)).coerceAtLeast(0)
-        val direct = app.settings.current.autoOpen && Files.opensDirectly(name, mime) && !locked()
         main.postDelayed({
+            if (session !== s) return@postDelayed
             app.feedback.play(Cue.RECEIVED)
-            val o = overlay
-            when {
-                o != null && direct -> o.expandThen {
-                    open()
-                    main.postDelayed({ hideOverlay() }, 380)
-                }
-                o != null -> {
-                    o.setFile(name, mime)
-                    o.showDone(detail, Files.openLabel(name, mime)) { hideOverlay(); open() }
-                    main.removeCallbacks(removeOverlay)
-                    main.postDelayed(removeOverlay, 9000)
-                }
-                direct -> open() // no overlay permission: still open it if Android allows
+            overlay?.let {
+                it.showDone(detail, label) { hideOverlay(); open() }
+                main.removeCallbacks(removeOverlay)
+                main.postDelayed(removeOverlay, 9000)
             }
         }, wait)
     }
 
-    private fun openItem(uri: Uri, name: String, mime: String) {
-        runCatching { startActivity(OpenFileActivity.intent(this, uri, name, mime).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-    }
-
     private fun linkReceived(m: Msg.Link) {
+        val s = session ?: return
         val host = runCatching { Uri.parse(m.url).host.orEmpty().removePrefix("www.") }.getOrDefault("")
         val title = m.title.ifBlank { host }
-        val uri = Uri.parse(m.url)
         app.transfers.add(pt.johnny.bump.data.Transfer(java.util.UUID.randomUUID().toString(), pt.johnny.bump.data.Direction.RECEIVED, title, Files.LINK_MIME, 0, m.url, peerName.orEmpty(), System.currentTimeMillis()))
         publish("Recebido: $title")
         overlay?.apply { setLinkHost(host); setFile(title, Files.LINK_MIME) }
-        if (session?.direct != true) notifyReceived(title, Files.LINK_MIME, uri)
-        deliver(title, Files.LINK_MIME, host) { openItem(uri, title, Files.LINK_MIME) }
+        val open = { openLink(m.url, m.browser) }
+        when {
+            s.direct && s.landed && !s.opened -> { s.opened = true; open(); main.postDelayed({ hideOverlay() }, 700) }
+            s.direct -> s.pendingOpen = open
+            else -> {
+                notifyReceived(title, Files.LINK_MIME, Uri.parse(m.url))
+                finishCalmly(s, host, "Abrir link") { open() }
+            }
+        }
     }
 
     private fun textReceived(m: Msg.Text) {
@@ -351,9 +380,7 @@ class ReceiverService : Service(), NearbyLink.Listener {
         app.feedback.play(Cue.RECEIVED)
     }
 
-    override fun onIncomingStarted(name: String, mime: String) {
-        overlay?.setFile(name, mime)
-    }
+    override fun onIncomingStarted(name: String, mime: String) = Unit
 
     override fun onProgress(fraction: Float, bytes: Long, total: Long) {
         session?.let { s -> Incoming.update(s.id) { it.copy(progress = fraction) } }
@@ -361,18 +388,37 @@ class ReceiverService : Service(), NearbyLink.Listener {
         overlay?.setHeadline(peerName ?: "Outro dispositivo", "${Files.humanSize(bytes)} de ${Files.humanSize(total)}")
     }
 
-    override fun onFileSaved(name: String, mime: String, size: Long, uri: Uri) {
+    override fun onFileSaved(index: Int, name: String, mime: String, size: Long, uri: Uri) {
+        val s = session ?: return
+        s.saved++
         publish("Recebido: $name")
-        session?.let { s -> Incoming.update(s.id) { it.copy(uri = uri, progress = 1f, name = name, mime = mime) } }
-        if (session?.direct != true) notifyReceived(name, mime, uri)
-        if (preview == null) loadThumb(uri) { bmp -> preview = bmp; overlay?.setHeroImage(bmp) }
-        deliver(name, mime, "De ${peerName ?: "outro dispositivo"} · ${Files.humanSize(size)}") { openItem(uri, name, mime) }
+        Incoming.updateEntry(s.id, index) { it.copy(uri = uri, name = name, mime = mime) }
+        overlay?.markEntryDone(index)
+        if (index == 0 && previews[0] == null) loadThumb(uri) { bmp -> previews[0] = bmp; overlay?.setHeroImage(bmp); Incoming.updateEntry(s.id, 0) { it.copy(preview = bmp) } }
+        val all = s.saved >= s.count
+        if (all) Incoming.update(s.id) { it.copy(progress = 1f) }
+        when {
+            s.inViewer -> Unit // the viewer is (or will be) open and swaps in each full file itself
+            s.direct -> { // single audio etc.: open the moment it has landed
+                val open = { openItem(uri, name, mime) }
+                if (s.landed && !s.opened) { s.opened = true; open(); main.postDelayed({ hideOverlay() }, 700) } else s.pendingOpen = open
+            }
+            else -> {
+                notifyReceived(name, mime, uri)
+                if (all) {
+                    if (s.count > 1) finishCalmly(s, "De ${peerName ?: "outro dispositivo"}", "Ver os ${s.count}") {
+                        runCatching { startActivity(pt.johnny.bump.ui.viewer.ViewerActivity.intent(this, s.id)) }
+                    }
+                    else finishCalmly(s, "De ${peerName ?: "outro dispositivo"} · ${Files.humanSize(size)}", Files.openLabel(name, mime)) { openItem(uri, name, mime) }
+                }
+            }
+        }
     }
 
-    private fun loadThumb(uri: Uri, done: (android.graphics.Bitmap?) -> Unit) {
+    private fun loadThumb(uri: Uri, done: (android.graphics.Bitmap) -> Unit) {
         if (Build.VERSION.SDK_INT < 29) return
         Thread {
-            val b = runCatching { contentResolver.loadThumbnail(uri, android.util.Size(384, 384), null) }.getOrNull()
+            val b = runCatching { contentResolver.loadThumbnail(uri, android.util.Size(720, 720), null) }.getOrNull()
             if (b != null) main.post { done(b) }
         }.start()
     }
@@ -427,9 +473,9 @@ class ReceiverService : Service(), NearbyLink.Listener {
             this.params = params
             configure(NameDropView.Role.RECEIVER, null, null)
             setDirectOpen(direct)
-            setFile(armedName, armedMime)
+            setEntries(armItems.map { it.name to it.mime }, (armCount - armItems.size).coerceAtLeast(0))
+            previews.forEachIndexed { i, b -> setEntryImage(i, b) }
             if (armedMime == Files.LINK_MIME) setLinkHost(linkHost)
-            setHeroImage(preview)
             setHeadline(peerName ?: "Outro dispositivo", "A receber…")
             onReleaseCue = { app.feedback.play(Cue.BUMP) }
             // Once the choreography is over, a tap anywhere dismisses (a long transfer keeps going).

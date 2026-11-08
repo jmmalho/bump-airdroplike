@@ -19,24 +19,24 @@ import kotlin.math.max
 object Previews {
     private const val HERO_PX = 1080
 
-    fun render(c: Context, original: Uri, staged: LocalFile): Bitmap? = runCatching {
+    fun render(c: Context, original: Uri, staged: LocalFile, maxPx: Int = HERO_PX): Bitmap? = runCatching {
         when (Files.kind(staged.name, staged.mime)) {
-            Files.Kind.IMAGE, Files.Kind.VIDEO -> thumbnail(c, original) ?: thumbnail(c, staged.openUri)
-            Files.Kind.PDF -> pdfFirstPage(staged)
+            Files.Kind.IMAGE, Files.Kind.VIDEO -> thumbnail(c, original, maxPx) ?: thumbnail(c, staged.openUri, maxPx)
+            Files.Kind.PDF -> pdfFirstPage(staged, maxPx)
             else -> null
         }
     }.getOrNull()
 
-    private fun thumbnail(c: Context, uri: Uri): Bitmap? =
+    private fun thumbnail(c: Context, uri: Uri, maxPx: Int): Bitmap? =
         if (Build.VERSION.SDK_INT < 29) null
-        else runCatching { c.contentResolver.loadThumbnail(uri, Size(HERO_PX, HERO_PX), null) }.getOrNull()
+        else runCatching { c.contentResolver.loadThumbnail(uri, Size(maxPx, maxPx), null) }.getOrNull()
 
-    private fun pdfFirstPage(file: LocalFile): Bitmap? {
+    private fun pdfFirstPage(file: LocalFile, maxPx: Int): Bitmap? {
         ParcelFileDescriptor.open(file.file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
             PdfRenderer(fd).use { pdf ->
                 if (pdf.pageCount == 0) return null
                 pdf.openPage(0).use { page ->
-                    val scale = HERO_PX.toFloat() / max(page.width, page.height)
+                    val scale = maxPx.toFloat() / max(page.width, page.height)
                     val w = (page.width * scale).toInt().coerceAtLeast(1)
                     val h = (page.height * scale).toInt().coerceAtLeast(1)
                     val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -49,8 +49,8 @@ object Previews {
     }
 
     /** JPEG small enough to travel as a single control payload before the bump. */
-    fun jpeg(src: Bitmap): ByteArray? {
-        var side = 720
+    fun jpeg(src: Bitmap, maxSide: Int = 720): ByteArray? {
+        var side = maxSide
         while (side >= 240) {
             val s = side.toFloat() / max(src.width, src.height)
             val scaled = if (s < 1f) Bitmap.createScaledBitmap(src, (src.width * s).toInt().coerceAtLeast(1), (src.height * s).toInt().coerceAtLeast(1), true) else src

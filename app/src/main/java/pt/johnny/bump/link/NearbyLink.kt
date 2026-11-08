@@ -53,10 +53,10 @@ class NearbyLink(context: Context, val role: Role, private val listener: Listene
         fun onConnecting(remote: Remote) {}
         fun onReady(remote: Remote) {}
         fun onControl(msg: Msg) {}
-        fun onPreview(jpeg: ByteArray) {}
+        fun onPreview(index: Int, jpeg: ByteArray) {}
         fun onIncomingStarted(name: String, mime: String) {}
         fun onProgress(fraction: Float, bytes: Long, total: Long) {}
-        fun onFileSaved(name: String, mime: String, size: Long, uri: Uri) {}
+        fun onFileSaved(index: Int, name: String, mime: String, size: Long, uri: Uri) {}
         fun onSendFinished(count: Int) {}
         fun onDisconnected(remote: Remote?) {}
         fun onError(message: String) {}
@@ -95,6 +95,7 @@ class NearbyLink(context: Context, val role: Role, private val listener: Listene
     private val queue = ArrayDeque<LocalFile>()
     private var active: Pair<Payload, LocalFile>? = null
     private var sentCount = 0
+    private var sendIndex = 0
     private var sendTotal = 0L
     private var sendDoneBytes = 0L
     var sending = false
@@ -171,10 +172,10 @@ class NearbyLink(context: Context, val role: Role, private val listener: Listene
         client.sendPayload(r.endpointId, Payload.fromBytes(Protocol.encode(msg)))
     }
 
-    fun sendPreview(jpeg: ByteArray) {
+    fun sendPreview(index: Int, jpeg: ByteArray) {
         val r = remote ?: return
         if (closed || !authenticated) return
-        val wire = Protocol.encodePreview(jpeg) ?: return
+        val wire = Protocol.encodePreview(index, jpeg) ?: return
         client.sendPayload(r.endpointId, Payload.fromBytes(wire))
     }
 
@@ -251,6 +252,7 @@ class NearbyLink(context: Context, val role: Role, private val listener: Listene
         if (role != Role.SENDER || !authenticated || sending || files.isEmpty()) return
         sending = true
         sentCount = 0
+        sendIndex = 0
         sendTotal = files.sumOf { it.size.coerceAtLeast(0) }
         sendDoneBytes = 0
         queue.clear(); queue.addAll(files)
@@ -269,7 +271,7 @@ class NearbyLink(context: Context, val role: Role, private val listener: Listene
         try {
             val payload = Payload.fromFile(next.file)
             active = payload to next
-            send(Msg.Meta(payload.id, next.name, next.mime, next.size))
+            send(Msg.Meta(payload.id, next.name, next.mime, next.size, sendIndex++))
             client.sendPayload(r.endpointId, payload)
                 .addOnFailureListener { fail("Não foi possível enviar ${next.name}.") }
         } catch (_: FileNotFoundException) {
@@ -291,7 +293,7 @@ class NearbyLink(context: Context, val role: Role, private val listener: Listene
                 val out = Files.saveReceived(ctx, source, m.name, mime)
                 val size = Files.size(ctx, out).takeIf { it >= 0 } ?: m.size
                 app.transfers.add(Transfer(UUID.randomUUID().toString(), Direction.RECEIVED, m.name, mime, size, out.toString(), peerName, System.currentTimeMillis()))
-                main.post { listener.onFileSaved(m.name, mime, size, out) }
+                main.post { listener.onFileSaved(m.index, m.name, mime, size, out) }
             } catch (e: Exception) {
                 fail("Não foi possível guardar ${m.name}: ${e.message}")
             } finally {
@@ -379,7 +381,7 @@ class NearbyLink(context: Context, val role: Role, private val listener: Listene
                     Payload.Type.BYTES -> {
                         val bytes = payload.asBytes() ?: return@post
                         val preview = Protocol.decodePreview(bytes)
-                        if (preview != null) { if (authenticated && role == Role.RECEIVER) listener.onPreview(preview) }
+                        if (preview != null) { if (authenticated && role == Role.RECEIVER) listener.onPreview(preview.first, preview.second) }
                         else Protocol.decode(bytes)?.let(::handle)
                     }
                     Payload.Type.FILE -> {

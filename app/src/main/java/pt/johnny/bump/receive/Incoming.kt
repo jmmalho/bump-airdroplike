@@ -8,19 +8,18 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
 /**
- * The item currently arriving, shared between the receiver service and the in-app viewer.
- * The viewer opens on the preview the instant the item leaves the notch and swaps in the
+ * What is arriving right now, shared between the receiver service and the in-app viewer.
+ * The viewer opens on the previews the instant the items leave the notch and swaps in each
  * full file as soon as it is saved.
  */
 object Incoming {
+    data class Entry(val name: String, val mime: String, val preview: Bitmap? = null, val uri: Uri? = null)
+
     data class Item(
         val id: Long,
-        val name: String,
-        val mime: String,
         val peer: String,
-        val preview: Bitmap? = null,
+        val entries: List<Entry>,
         val progress: Float = -1f,
-        val uri: Uri? = null,
         val error: String? = null,
     )
 
@@ -29,4 +28,9 @@ object Incoming {
 
     fun start(item: Item) { _item.value = item }
     fun update(id: Long, change: (Item) -> Item) = _item.update { if (it?.id == id) change(it) else it }
+
+    fun updateEntry(id: Long, index: Int, change: (Entry) -> Entry) = update(id) { item ->
+        if (index !in item.entries.indices) item
+        else item.copy(entries = item.entries.toMutableList().also { it[index] = change(it[index]) })
+    }
 }

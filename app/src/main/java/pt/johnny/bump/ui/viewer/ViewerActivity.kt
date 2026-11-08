@@ -28,7 +28,11 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -128,6 +132,7 @@ class ViewerActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ViewerScreen(id: Long, onClose: () -> Unit) {
     val context = LocalContext.current
@@ -147,29 +152,37 @@ private fun ViewerScreen(id: Long, onClose: () -> Unit) {
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         if (item != null) {
+            val pager = rememberPagerState { item.entries.size }
             val toggle = { chrome = !chrome }
-            when (Files.kind(item.name, item.mime)) {
-                Files.Kind.PDF -> PdfPages(item, toggle)
-                Files.Kind.VIDEO -> VideoPlayer(item)
-                else -> ZoomImage(item, toggle)
+            HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
+                val entry = item.entries[page]
+                when (Files.kind(entry.name, entry.mime)) {
+                    Files.Kind.PDF -> PdfPages(entry, toggle)
+                    Files.Kind.VIDEO -> VideoPlayer(entry, playing = pager.currentPage == page)
+                    Files.Kind.IMAGE -> ZoomImage(entry, toggle)
+                    else -> OtherItem(entry, toggle)
+                }
             }
-            if (item.uri == null && item.progress in 0f..0.999f) {
+            if (item.progress in 0f..0.999f) {
                 Box(Modifier.fillMaxWidth().height(3.dp).background(Color.White.copy(alpha = .18f))) {
                     Box(Modifier.fillMaxWidth(item.progress.coerceIn(0f, 1f)).height(3.dp).background(Color.White))
                 }
             }
-            val video = Files.kind(item.name, item.mime) == Files.Kind.VIDEO
+            val entry = item.entries.getOrNull(pager.currentPage) ?: item.entries.first()
+            val video = Files.kind(entry.name, entry.mime) == Files.Kind.VIDEO
             AnimatedVisibility(
                 chrome || video,
                 enter = fadeIn(tween(220, easing = Motion.EaseOut)),
                 exit = fadeOut(tween(180, easing = Motion.EaseOut)),
-            ) { TopChrome(item, onClose) }
+            ) {
+                TopChrome(entry, item.peer, if (item.entries.size > 1) "${pager.currentPage + 1} de ${item.entries.size}" else null, onClose)
+            }
         }
     }
 }
 
 @Composable
-private fun TopChrome(item: Incoming.Item, onClose: () -> Unit) {
+private fun TopChrome(entry: Incoming.Entry, peer: String, position: String?, onClose: () -> Unit) {
     val context = LocalContext.current
     Box(
         Modifier.fillMaxWidth()
@@ -179,33 +192,55 @@ private fun TopChrome(item: Incoming.Item, onClose: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, "Fechar", tint = Color.White) }
             Column(Modifier.weight(1f).padding(horizontal = 4.dp)) {
-                Text(item.name, color = Color.White, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("De ${item.peer}", color = Color.White.copy(alpha = .7f), style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                Text(entry.name, color = Color.White, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(listOfNotNull("De $peer", position).joinToString(" · "), color = Color.White.copy(alpha = .7f), style = MaterialTheme.typography.bodySmall, maxLines = 1)
             }
-            val uri = item.uri
+            val uri = entry.uri
             IconButton(enabled = uri != null, onClick = {
-                uri?.let { runCatching { context.startActivity(OpenFileActivity.share(context, it, item.mime).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }
+                uri?.let { runCatching { context.startActivity(OpenFileActivity.share(context, it, entry.mime).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }
             }) { Icon(Icons.Rounded.Share, "Partilhar", tint = Color.White) }
             TextButton(enabled = uri != null, onClick = {
-                uri?.let { runCatching { context.startActivity(OpenFileActivity.intent(context, it, item.name, item.mime).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }
+                uri?.let { runCatching { context.startActivity(OpenFileActivity.intent(context, it, entry.name, entry.mime).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }
             }) { Text("Abrir com…", color = Color.White) }
         }
+    }
+}
+
+/** Anything the viewer does not render itself: a big tile and a way out to the right app. */
+@Composable
+private fun OtherItem(entry: Incoming.Entry, onTap: () -> Unit) {
+    val context = LocalContext.current
+    Column(
+        Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures(onTap = { onTap() }) },
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+    ) {
+        pt.johnny.bump.ui.KindTile(entry.name, entry.mime, size = 132.dp)
+        Text(entry.name, color = Color.White, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 18.dp, start = 24.dp, end = 24.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
+        val uri = entry.uri
+        TextButton(enabled = uri != null, onClick = {
+            uri?.let { runCatching { context.startActivity(OpenFileActivity.intent(context, it, entry.name, entry.mime).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }
+        }) { Text(if (uri == null) "A chegar…" else Files.openLabel(entry.name, entry.mime), color = Color.White) }
     }
 }
 
 // ---------------------------------------------------------------- photo
 
 @Composable
-private fun ZoomImage(item: Incoming.Item, onTap: () -> Unit) {
+private fun ZoomImage(entry: Incoming.Entry, onTap: () -> Unit) {
     val context = LocalContext.current
-    val full by produceState<Bitmap?>(null, item.uri) {
-        val u = item.uri ?: return@produceState
+    val full by produceState<Bitmap?>(null, entry.uri) {
+        val u = entry.uri ?: return@produceState
         value = withContext(Dispatchers.IO) { decodeImage(context, u, 2560) }
     }
-    val bmp = full ?: item.preview
+    val bmp = full ?: entry.preview
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     val scope = rememberCoroutineScope()
+    val zoom = rememberTransformableState { zoomChange, panChange, _ ->
+        scale = (scale * zoomChange).coerceIn(1f, 6f)
+        offset = if (scale <= 1.001f) Offset.Zero else offset + panChange
+    }
     Box(
         Modifier.fillMaxSize()
             .pointerInput(Unit) {
@@ -215,7 +250,6 @@ private fun ZoomImage(item: Incoming.Item, onTap: () -> Unit) {
                         val target = if (scale > 1.05f) 1f else 2.5f
                         val startScale = scale
                         val startOffset = offset
-                        // Zoom toward the tapped point.
                         val focus = Offset(tap.x - size.width / 2f, tap.y - size.height / 2f)
                         val endOffset = if (target == 1f) Offset.Zero else -focus * (target - 1f)
                         scope.launch {
@@ -227,16 +261,12 @@ private fun ZoomImage(item: Incoming.Item, onTap: () -> Unit) {
                     },
                 )
             }
-            .pointerInput(Unit) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    scale = (scale * zoom).coerceIn(1f, 6f)
-                    offset = if (scale <= 1.001f) Offset.Zero else offset + pan
-                }
-            },
+            // Pinch always zooms; one-finger drags only pan when zoomed in, otherwise the gallery swipes.
+            .transformable(zoom, canPan = { scale > 1.01f }),
     ) {
         if (bmp != null) {
             Image(
-                bmp.asImageBitmap(), item.name, contentScale = ContentScale.Fit,
+                bmp.asImageBitmap(), entry.name, contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize().graphicsLayer {
                     scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y
                 },
@@ -300,7 +330,7 @@ private class PdfDoc(private val fd: ParcelFileDescriptor, private val renderer:
 }
 
 @Composable
-private fun PdfPages(item: Incoming.Item, onTap: () -> Unit) {
+private fun PdfPages(item: Incoming.Entry, onTap: () -> Unit) {
     val context = LocalContext.current
     val uri = item.uri
     val doc = remember(uri) { uri?.let { PdfDoc.open(context, it) } }
@@ -343,9 +373,11 @@ private fun PdfPages(item: Incoming.Item, onTap: () -> Unit) {
 // ---------------------------------------------------------------- video
 
 @Composable
-private fun VideoPlayer(item: Incoming.Item) {
+private fun VideoPlayer(item: Incoming.Entry, playing: Boolean) {
     val uri = item.uri
-    var playing by remember(uri) { mutableStateOf(false) }
+    var started by remember(uri) { mutableStateOf(false) }
+    var view by remember { mutableStateOf<VideoView?>(null) }
+    LaunchedEffect(playing, view) { view?.let { if (playing) it.start() else it.pause() } }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         if (uri != null) {
             AndroidView(
@@ -354,7 +386,8 @@ private fun VideoPlayer(item: Incoming.Item) {
                         val video = VideoView(c)
                         addView(video, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
                         video.setMediaController(MediaController(c).also { it.setAnchorView(video) })
-                        video.setOnPreparedListener { mp -> mp.isLooping = false; playing = true; video.start() }
+                        video.setOnPreparedListener { mp -> mp.isLooping = false; started = true; if (playing) video.start() }
+                        view = video
                         video.setVideoURI(uri)
                     }
                 },
@@ -362,7 +395,7 @@ private fun VideoPlayer(item: Incoming.Item) {
             )
         }
         // The frame the overlay ended on stays until the first video frame is ready.
-        if (!playing) item.preview?.let {
+        if (!started) item.preview?.let {
             Image(it.asImageBitmap(), item.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
         }
     }

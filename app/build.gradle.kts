@@ -4,6 +4,11 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// Permanent signing key (from GitHub secrets in CI). With it, every new APK installs OVER the old one.
+val bumpKeystore: File? = System.getenv("BUMP_KEYSTORE_FILE")?.let { file(it) }?.takeIf { it.exists() }
+// Every CI run gets a higher versionCode, so Android always accepts the update.
+val ciRun: Int = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0
+
 android {
     namespace = "pt.johnny.bump"
     compileSdk = 36
@@ -12,17 +17,31 @@ android {
         applicationId = "pt.johnny.bump"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10
-        versionName = "1.0.0"
+        versionCode = 100 + ciRun
+        versionName = "1.0.$ciRun"
+    }
+
+    signingConfigs {
+        if (bumpKeystore != null) {
+            create("bump") {
+                storeFile = bumpKeystore
+                storePassword = System.getenv("BUMP_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("BUMP_KEY_ALIAS") ?: "bump"
+                keyPassword = System.getenv("BUMP_KEY_PASSWORD") ?: System.getenv("BUMP_KEYSTORE_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
+        debug {
+            // Same key for debug and release: either one updates the other in place.
+            if (bumpKeystore != null) signingConfig = signingConfigs.getByName("bump")
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Signed with the debug key so the CI artifact installs; swap for a real keystore to publish.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (bumpKeystore != null) signingConfigs.getByName("bump") else signingConfigs.getByName("debug")
         }
     }
 

@@ -106,10 +106,11 @@ class BumpLogicTest {
         val msgs = listOf(
             Msg.Pair("a".repeat(64)), Msg.PairAck, Msg.Hello("0123456789ab", "f".repeat(32)),
             Msg.Auth("0".repeat(64)), Msg.Beacon("deadbeef"),
-            Msg.Arm(2, 12345, "relatório | final.pdf", "application/pdf"),
+            Msg.Arm(2, 12345, listOf(Msg.Item("relatório | final.pdf", "application/pdf", 12000), Msg.Item("foto.jpg", "image/jpeg", 345))),
+            Msg.Arm(1, 0, listOf(Msg.Item("example.com", "text/uri-list", 0))), Msg.PreviewAck(3),
             Msg.Disarm, Msg.Ping(42), Msg.Pong(42, 99), Msg.Knock(123456789, 3.5f),
-            Msg.Go("bump"), Msg.Meta(77, "ção|x.png", "image/png", 9), Msg.Done,
-            Msg.Link("https://pt.wikipedia.org/wiki/Lisboa?a=1|2", "Lisboa – Wikipédia"), Msg.Text("olá\nmundo | 2"),
+            Msg.Go("bump", 123_456_789_000L), Msg.Meta(77, "ção|x.png", "image/png", 9, 4), Msg.Done,
+            Msg.Link("https://pt.wikipedia.org/wiki/Lisboa?a=1|2", "Lisboa – Wikipédia", "com.android.chrome"), Msg.Text("olá\nmundo | 2"),
         )
         for (m in msgs) assertEquals(m, Protocol.decode(Protocol.encode(m)))
     }
@@ -127,15 +128,21 @@ class BumpLogicTest {
         assertEquals("https://example.com/a?b=1", Protocol.findUrl("Vê isto: https://example.com/a?b=1."))
         assertEquals("https://chrome.example/page", Protocol.findUrl("https://chrome.example/page"))
         assertNull(Protocol.findUrl("sem link aqui"))
+        // A forged browser package is dropped, the link survives.
+        val l = Protocol.decode(Protocol.encode(Msg.Link("https://a.pt", "t", "bad pkg|x"))) as Msg.Link
+        assertEquals("", l.browser)
     }
 
     @Test fun previewRoundTrip() {
         val jpeg = ByteArray(5000) { (it % 251).toByte() }
-        val wire = Protocol.encodePreview(jpeg)!!
-        assertTrue(jpeg.contentEquals(Protocol.decodePreview(wire)!!))
+        val wire = Protocol.encodePreview(7, jpeg)!!
+        val (index, body) = Protocol.decodePreview(wire)!!
+        assertEquals(7, index)
+        assertTrue(jpeg.contentEquals(body))
         assertNull(Protocol.decode(wire)) // never mistaken for a control message
         assertNull(Protocol.decodePreview(Protocol.encode(Msg.Done)))
-        assertNull(Protocol.encodePreview(ByteArray(Protocol.MAX_PREVIEW_BYTES + 1)))
+        assertNull(Protocol.encodePreview(0, ByteArray(Protocol.MAX_PREVIEW_BYTES + 1)))
+        assertNull(Protocol.encodePreview(Protocol.MAX_ITEMS, jpeg))
     }
 
     @Test fun proofIsBoundToAuthor() {

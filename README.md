@@ -55,7 +55,14 @@ Os parâmetros (velocidade, amplitude, nitidez, largura, distorção, brilho, te
   (foto com zoom e duplo toque, PDF com todas as páginas, vídeo a tocar). "Abrir com…" passa para outra
   app. Links e áudio fazem o mesmo voo e abrem no navegador/leitor. Apps (.apk) nunca abrem sozinhas;
   com o ecrã bloqueado fica só a notificação.
-- **Links do Chrome**: Partilhar › BUMP envia o URL (só http/https); abre no navegador do tablet.
+- **Vários ficheiros**: o telemóvel mostra uma pilha; no toque os itens entram no notch um a um, com
+  um pulso de luz cada, e saem do topo do tablet nos mesmos instantes, caindo numa grelha. Se forem
+  fotos/vídeos/PDFs, o primeiro cresce para ecrã inteiro e abre uma galeria (deslizar entre todos).
+- **Sem atraso no tablet**: o telemóvel só puxa para o notch quando o tablet confirmou que já tem as
+  pré-visualizações; o arranque é agendado no relógio do tablet (offset medido por ping), por isso as
+  duas animações começam no mesmo instante físico e os bytes começam logo a seguir.
+- **Links do Chrome**: Partilhar › BUMP envia o URL (só http/https) e o nome da app de origem; o tablet
+  abre no mesmo navegador (Chrome → Chrome), diretamente enquanto a animação está no ecrã.
   **Texto** simples vai para a área de transferência.
 - Desliga em **Definições › Receção › Abrir logo ao receber**.
 
@@ -91,6 +98,13 @@ Partilhar › BUMP no ecrã onde está o PDF ou a foto.
 - **Nearby Connections deixa de ligar Bluetooth/Wi-Fi sozinho** (final de 2026). O BUMP verifica os rádios
   antes de cada sessão e mostra botões para os ligar.
 - `targetSdk 36` → edge-to-edge obrigatório, já implementado.
+
+## Atualizar por cima (sem desinstalar)
+
+O workflow assina com uma chave permanente guardada em *secrets* do repositório
+(`BUMP_KEYSTORE_BASE64`, `BUMP_KEYSTORE_PASSWORD`, `BUMP_KEY_ALIAS`, `BUMP_KEY_PASSWORD`) e o
+`versionCode` sobe com cada execução do Actions. Com isso, cada APK nova instala por cima da anterior,
+mantendo emparelhamentos e histórico. Sem os secrets, o build avisa e usa uma chave temporária.
 
 ## Construir
 
