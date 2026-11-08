@@ -49,9 +49,12 @@ Os parâmetros (velocidade, amplitude, nitidez, largura, distorção, brilho, te
   folha. No toque, o item é sugado para o notch (posição real do recorte da câmara, lida das
   `DisplayCutout`) enquanto o brilho carrega; a onda rebenta do notch.
 - **Tablet**: a pré-visualização chegou em silêncio antes do toque (JPEG ≤ 400 KB numa mensagem de
-  bytes). Na libertação sai do topo com uma mola, assenta no meio com o progresso e, quando o ficheiro
-  chega, cresce até ocupar o ecrã e abre logo no visualizador (fotos, vídeos, PDFs, áudio, links).
-  Apps (.apk) nunca abrem sozinhas. Com o ecrã bloqueado fica só a notificação.
+  bytes). Na libertação, fotos, vídeos e PDFs saem do topo **já abertos**: voam diretamente para ecrã
+  inteiro e, nesse instante, o visualizador do BUMP entra por baixo com exatamente o mesmo
+  enquadramento, sem transição. O ficheiro completo substitui a pré-visualização assim que é guardado
+  (foto com zoom e duplo toque, PDF com todas as páginas, vídeo a tocar). "Abrir com…" passa para outra
+  app. Links e áudio fazem o mesmo voo e abrem no navegador/leitor. Apps (.apk) nunca abrem sozinhas;
+  com o ecrã bloqueado fica só a notificação.
 - **Links do Chrome**: Partilhar › BUMP envia o URL (só http/https); abre no navegador do tablet.
   **Texto** simples vai para a área de transferência.
 - Desliga em **Definições › Receção › Abrir logo ao receber**.

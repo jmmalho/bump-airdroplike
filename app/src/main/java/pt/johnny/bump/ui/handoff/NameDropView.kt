@@ -420,6 +420,8 @@ class NameDropView(context: Context) : FrameLayout(context) {
         var title = ""
         var subtitle = ""
         var progress = -1f
+        /** Receiver: fly straight from the notch to full screen, already "open" (no resting card). */
+        var directOpen = false
 
         private var chargeS = 1.2f
         private var beganAt = 0L
@@ -471,7 +473,8 @@ class NameDropView(context: Context) : FrameLayout(context) {
         private fun fullRect(): RectF {
             val w = width.toFloat(); val h = height.toFloat()
             if (!showsPicture()) return RectF(0f, 0f, w, h)
-            val a = aspect()
+            // Unclamped aspect: must match the viewer's ContentScale.Fit exactly for a seamless handover.
+            val a = image?.let { it.width.toFloat() / it.height } ?: aspect()
             var rw = w; var rh = w / a
             if (rh > h) { rh = h; rw = h * a }
             return RectF(w / 2 - rw / 2, h / 2 - rh / 2, w / 2 + rw / 2, h / 2 + rh / 2)
@@ -532,6 +535,20 @@ class NameDropView(context: Context) : FrameLayout(context) {
         private fun drawReceiver(c: Canvas): Boolean {
             if (releasedAt == 0L) return false
             val e = secs(releasedAt)
+            if (directOpen) {
+                // Out of the notch and straight to the open, full-screen view of the item.
+                val m = pt.johnny.bump.ui.theme.Motion.springStep(e, 0.55f, 0.86f)
+                val dot = dp(20f)
+                val tiny = RectF(origin.x - dot / 2, origin.y - dot / 2, origin.x + dot / 2, origin.y + dot / 2)
+                val rect = lerpRect(tiny, fullRect(), m)
+                val radius = lerp(dot / 2, 0f, m.coerceIn(0f, 1f))
+                drawItem(c, rect, radius, pt.johnny.bump.ui.theme.Motion.easeOut(e / 0.12f))
+                if (progress in 0f..0.999f) {
+                    paint.color = white(.85f)
+                    c.drawRect(0f, 0f, width * progress, dp(3f), paint)
+                }
+                return e < 1.4f
+            }
             val rest = restRect()
             val m = pt.johnny.bump.ui.theme.Motion.springStep(e, 0.62f, 0.72f)
             val dot = dp(20f)
@@ -676,6 +693,10 @@ class NameDropView(context: Context) : FrameLayout(context) {
     }
 
     fun setLinkHost(host: String) { hero.linkHost = host; hero.invalidate() }
+    fun setDirectOpen(on: Boolean) { hero.directOpen = on; hero.invalidate() }
+
+    /** Where the item sits when fully open (fit to the whole window) — the viewer uses the same rule. */
+    val openSettleSeconds get() = 0.55f
 
     companion object {
         private const val GLOW_RELEASE = 0.35f

@@ -71,6 +71,15 @@
             </intent-filter>
         </activity>
 
+        <!-- Opens the received item already "open", underneath the NameDrop overlay (no transition). -->
+        <activity
+            android:name=".ui.viewer.ViewerActivity"
+            android:exported="false"
+            android:taskAffinity="pt.johnny.bump.viewer"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize"
+            android:theme="@style/Theme.Bump.Viewer" />
+
         <activity
             android:name=".ui.OpenFileActivity"
             android:exported="false"

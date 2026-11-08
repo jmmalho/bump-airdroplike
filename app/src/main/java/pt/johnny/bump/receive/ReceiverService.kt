@@ -71,6 +71,14 @@ class ReceiverService : Service(), NearbyLink.Listener {
     /** Preview the sender pushed before the bump, so the item can appear the instant they touch. */
     private var preview: android.graphics.Bitmap? = null
     private var linkHost = ""
+
+    /** One bump = one session. `direct` means the item flies out of the notch already open. */
+    private class Session(val id: Long, val direct: Boolean, val inViewer: Boolean) {
+        var landed = false
+        var opened = false
+        var pendingOpen: (() -> Unit)? = null
+    }
+    private var session: Session? = null
     private val removeOverlay = Runnable { hideOverlay() }
     private val disarmTimeout = Runnable { disarm() }
     private val calmBeacon = Runnable { if (running) beacon.advertise(token, active = false) }
@@ -212,7 +220,12 @@ class ReceiverService : Service(), NearbyLink.Listener {
         Thread {
             val opts = android.graphics.BitmapFactory.Options().apply { inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888 }
             val b = runCatching { android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, opts) }.getOrNull()
-            main.post { if (b != null) { preview = b; overlay?.setHeroImage(b) } }
+            main.post {
+                if (b != null) {
+                    preview = b; overlay?.setHeroImage(b)
+                    session?.let { s -> Incoming.update(s.id) { it.copy(preview = b) } }
+                }
+            }
         }.start()
     }
 
@@ -241,8 +254,34 @@ class ReceiverService : Service(), NearbyLink.Listener {
         publish("A receber $armedName")
         waveStartedAt = SystemClock.elapsedRealtime()
         val params = RippleParams.load(this)
+        val interactive = getSystemService(PowerManager::class.java)?.isInteractive == true
+        val kind = Files.kind(armedName, armedMime)
+        val direct = app.settings.current.autoOpen && Files.opensDirectly(armedName, armedMime) &&
+            !locked() && interactive && Permissions.overlayGranted(this)
+        val inViewer = direct && kind in setOf(Files.Kind.IMAGE, Files.Kind.VIDEO, Files.Kind.PDF)
+        val s = Session(SystemClock.elapsedRealtimeNanos(), direct, inViewer)
+        session = s
+        Incoming.start(Incoming.Item(s.id, armedName, armedMime, peerName ?: "outro dispositivo", preview))
         app.feedback.playCharge(params.chargeSeconds)
-        showOverlay(params)
+        showOverlay(params, direct)
+        overlay?.onChargeComplete = {
+            // The item reaches full screen ~0.55 s after the release: that is the "open" moment.
+            main.postDelayed({ landed(s) }, 550)
+        }
+    }
+
+    /** The item now fills the screen. Viewer types: slide the real viewer in underneath, then lift the overlay. */
+    private fun landed(s: Session) {
+        if (session !== s || !s.direct) return
+        s.landed = true
+        app.feedback.play(Cue.RECEIVED)
+        if (s.inViewer) {
+            s.opened = true
+            runCatching { startActivity(pt.johnny.bump.ui.viewer.ViewerActivity.intent(this, s.id)) }
+            main.postDelayed({ hideOverlay() }, 450) // let the viewer draw its first frame first
+        } else {
+            s.pendingOpen?.let { open -> s.opened = true; open(); main.postDelayed({ hideOverlay() }, 380) }
+        }
     }
 
     private fun locked() = getSystemService(android.app.KeyguardManager::class.java)?.isKeyguardLocked == true
@@ -252,6 +291,15 @@ class ReceiverService : Service(), NearbyLink.Listener {
      * grow it to full screen and open it (photos, videos, PDFs, links) or show it with a button.
      */
     private fun deliver(name: String, mime: String, detail: String, open: () -> Unit) {
+        val s = session
+        if (s != null && s.direct) {
+            when {
+                s.inViewer -> Unit // the viewer is (or will be) open and swaps in the full file itself
+                s.landed && !s.opened -> { s.opened = true; open(); main.postDelayed({ hideOverlay() }, 380) }
+                else -> s.pendingOpen = open
+            }
+            return
+        }
         val p = RippleParams.load(this)
         val landedMs = ((p.chargeSeconds + 0.9f) * 1000).toLong()
         val wait = (landedMs - (SystemClock.elapsedRealtime() - waveStartedAt)).coerceAtLeast(0)
@@ -286,7 +334,7 @@ class ReceiverService : Service(), NearbyLink.Listener {
         app.transfers.add(pt.johnny.bump.data.Transfer(java.util.UUID.randomUUID().toString(), pt.johnny.bump.data.Direction.RECEIVED, title, Files.LINK_MIME, 0, m.url, peerName.orEmpty(), System.currentTimeMillis()))
         publish("Recebido: $title")
         overlay?.apply { setLinkHost(host); setFile(title, Files.LINK_MIME) }
-        notifyReceived(title, Files.LINK_MIME, uri)
+        if (session?.direct != true) notifyReceived(title, Files.LINK_MIME, uri)
         deliver(title, Files.LINK_MIME, host) { openItem(uri, title, Files.LINK_MIME) }
     }
 
@@ -308,13 +356,15 @@ class ReceiverService : Service(), NearbyLink.Listener {
     }
 
     override fun onProgress(fraction: Float, bytes: Long, total: Long) {
+        session?.let { s -> Incoming.update(s.id) { it.copy(progress = fraction) } }
         overlay?.setProgress(fraction)
         overlay?.setHeadline(peerName ?: "Outro dispositivo", "${Files.humanSize(bytes)} de ${Files.humanSize(total)}")
     }
 
     override fun onFileSaved(name: String, mime: String, size: Long, uri: Uri) {
         publish("Recebido: $name")
-        notifyReceived(name, mime, uri)
+        session?.let { s -> Incoming.update(s.id) { it.copy(uri = uri, progress = 1f, name = name, mime = mime) } }
+        if (session?.direct != true) notifyReceived(name, mime, uri)
         if (preview == null) loadThumb(uri) { bmp -> preview = bmp; overlay?.setHeroImage(bmp) }
         deliver(name, mime, "De ${peerName ?: "outro dispositivo"} · ${Files.humanSize(size)}") { openItem(uri, name, mime) }
     }
@@ -335,6 +385,7 @@ class ReceiverService : Service(), NearbyLink.Listener {
 
     override fun onError(message: String) {
         publish(message)
+        session?.let { s -> Incoming.update(s.id) { it.copy(error = message) } }
         val o = overlay ?: return
         o.showError(message)
         app.feedback.play(Cue.ERROR)
@@ -368,13 +419,14 @@ class ReceiverService : Service(), NearbyLink.Listener {
 
     // ---------- overlay ----------
 
-    private fun showOverlay(params: RippleParams) {
+    private fun showOverlay(params: RippleParams, direct: Boolean) {
         if (!Permissions.overlayGranted(this)) return
         if (getSystemService(PowerManager::class.java)?.isInteractive != true) return // never wake a sleeping screen
         hideOverlay()
         val view = NameDropView(this).apply {
             this.params = params
             configure(NameDropView.Role.RECEIVER, null, null)
+            setDirectOpen(direct)
             setFile(armedName, armedMime)
             if (armedMime == Files.LINK_MIME) setLinkHost(linkHost)
             setHeroImage(preview)
