@@ -31,12 +31,41 @@ sealed interface Msg {
     /** Sender committed to the transfer: both screens start the handoff wave now. */
     data class Go(val reason: String) : Msg
     data class Meta(val payloadId: Long, val name: String, val mime: String, val size: Long) : Msg
+    /** A web page shared from a browser: opens on the receiver. Only http(s). */
+    data class Link(val url: String, val title: String) : Msg
+    /** Plain text: lands on the receiver's clipboard. */
+    data class Text(val text: String) : Msg
     data object Done : Msg
 }
 
 object Protocol {
     private const val MAGIC = "BUMP4"
     const val MAX_CONTROL_BYTES = 16 * 1024
+    const val MAX_TEXT = 8000
+    /** Nearby BYTES payloads go up to ~1 MB; a 720 px JPEG preview stays well below this cap. */
+    const val MAX_PREVIEW_BYTES = 400 * 1024
+    private val PREVIEW_MAGIC = "BUMP4P|".toByteArray(StandardCharsets.US_ASCII)
+
+    fun isWebUrl(s: String): Boolean {
+        if (s.length > 4000) return false
+        val lower = s.lowercase()
+        return (lower.startsWith("https://") || lower.startsWith("http://")) && s.none { it.isWhitespace() }
+    }
+
+    /** First http(s) URL inside shared text (Chrome sends just the URL; other apps add prose around it). */
+    fun findUrl(text: String?): String? =
+        text?.let { Regex("https?://[^\\s<>\"]+", RegexOption.IGNORE_CASE).find(it)?.value?.trimEnd('.', ',', ')', ';', '!', '?') }
+            ?.takeIf(::isWebUrl)
+
+    /** Preview image sent silently before the bump so the receiver can show it the instant they touch. */
+    fun encodePreview(jpeg: ByteArray): ByteArray? =
+        if (jpeg.size > MAX_PREVIEW_BYTES) null else PREVIEW_MAGIC + jpeg
+
+    fun decodePreview(bytes: ByteArray): ByteArray? {
+        if (bytes.size <= PREVIEW_MAGIC.size || bytes.size > MAX_PREVIEW_BYTES + PREVIEW_MAGIC.size) return null
+        for (i in PREVIEW_MAGIC.indices) if (bytes[i] != PREVIEW_MAGIC[i]) return null
+        return bytes.copyOfRange(PREVIEW_MAGIC.size, bytes.size)
+    }
 
     private val b64e = Base64.getUrlEncoder().withoutPadding()
     private val b64d = Base64.getUrlDecoder()
@@ -62,6 +91,8 @@ object Protocol {
             is Msg.Knock -> "KNOCK|${m.atNanos}|${m.strength}"
             is Msg.Go -> "GO|${enc(m.reason)}"
             is Msg.Meta -> "META|${m.payloadId}|${enc(m.name)}|${enc(m.mime)}|${m.size}"
+            is Msg.Link -> "LINK|${enc(m.url)}|${enc(m.title)}"
+            is Msg.Text -> "TEXT|${enc(m.text)}"
             Msg.Done -> "DONE"
         }
         return "$MAGIC|$body".toByteArray(StandardCharsets.UTF_8)
@@ -69,7 +100,7 @@ object Protocol {
 
     /** Returns null for anything malformed; the link simply ignores it. */
     fun decode(bytes: ByteArray): Msg? {
-        if (bytes.size > MAX_CONTROL_BYTES) return null
+        if (bytes.size > MAX_CONTROL_BYTES + MAX_TEXT * 2) return null
         val p = String(bytes, StandardCharsets.UTF_8).split('|')
         if (p.size < 2 || p[0] != MAGIC) return null
         val a = p.drop(1)
@@ -87,6 +118,8 @@ object Protocol {
                 "KNOCK" -> if (a.size == 3) Msg.Knock(a[1].toLong(), a[2].toFloat()) else null
                 "GO" -> if (a.size == 2) Msg.Go(dec(a[1]).take(40)) else null
                 "META" -> if (a.size == 5) Msg.Meta(a[1].toLong(), dec(a[2]).take(240), dec(a[3]).take(120), a[4].toLong()) else null
+                "LINK" -> if (a.size == 3) dec(a[1]).takeIf(::isWebUrl)?.let { Msg.Link(it, dec(a[2]).take(200)) } else null
+                "TEXT" -> if (a.size == 2) Msg.Text(dec(a[1]).take(MAX_TEXT)) else null
                 "DONE" -> Msg.Done
                 else -> null
             }

@@ -126,9 +126,13 @@ object Files {
         else -> String.format(Locale.ROOT, "%.2f GB", bytes / 1073741824.0)
     }
 
-    enum class Kind(val label: String) { PDF("PDF"), IMAGE("IMG"), VIDEO("VÍDEO"), AUDIO("ÁUDIO"), APK("APK"), DOC("DOC") }
+    enum class Kind(val label: String) { PDF("PDF"), IMAGE("IMG"), VIDEO("VÍDEO"), AUDIO("ÁUDIO"), APK("APK"), LINK("LINK"), TEXT("TEXTO"), DOC("DOC") }
+
+    const val LINK_MIME = "text/uri-list"
+    const val TEXT_MIME = "text/plain"
 
     fun kind(name: String, mime: String): Kind {
+        if (mime == LINK_MIME) return Kind.LINK
         val m = resolveMime(name, mime)
         return when {
             m == APK_MIME -> Kind.APK
@@ -136,12 +140,18 @@ object Files {
             m.startsWith("image/") -> Kind.IMAGE
             m.startsWith("video/") -> Kind.VIDEO
             m.startsWith("audio/") -> Kind.AUDIO
+            m == TEXT_MIME && name.isEmpty() -> Kind.TEXT
             else -> Kind.DOC
         }
     }
 
+    /** Things that make sense to open the instant they arrive (no tap). Never APKs. */
+    fun opensDirectly(name: String, mime: String) = kind(name, mime) in setOf(Kind.IMAGE, Kind.VIDEO, Kind.PDF, Kind.LINK, Kind.AUDIO)
+
     fun openLabel(name: String, mime: String) = when (kind(name, mime)) {
         Kind.APK -> "Instalar"
+        Kind.LINK -> "Abrir link"
+        Kind.TEXT -> "Copiar"
         Kind.PDF -> "Abrir PDF"
         Kind.IMAGE -> "Ver foto"
         Kind.VIDEO -> "Ver vídeo"

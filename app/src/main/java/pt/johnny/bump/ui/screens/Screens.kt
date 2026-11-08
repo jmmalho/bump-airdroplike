@@ -139,6 +139,9 @@ fun SettingsScreen(onBack: () -> Unit, onDemo: () -> Unit) {
                 Slider(value = rssi, onValueChange = { rssi = it }, onValueChangeFinished = { app.settings.setRssi(rssi.toInt()) }, valueRange = -80f..-45f)
                 Text("Valores mais altos exigem os dispositivos mais juntos. O toque físico continua a ser o gatilho.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
+                Group("Receção")
+                ToggleRow("Abrir logo ao receber", "Fotos, vídeos, PDFs e links abrem assim que chegam. Apps nunca.", s.autoOpen) { app.settings.setAutoOpen(it) }
+
                 Group("Som e vibração")
                 ToggleRow("Efeitos sonoros", "Respeitam o modo silencioso", s.sounds) { app.settings.setSounds(it) }
                 ToggleRow("Vibração", "Um toque no momento do encosto", s.haptics) { app.settings.setHaptics(it) }

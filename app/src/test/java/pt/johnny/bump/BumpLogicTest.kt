@@ -109,6 +109,7 @@ class BumpLogicTest {
             Msg.Arm(2, 12345, "relatório | final.pdf", "application/pdf"),
             Msg.Disarm, Msg.Ping(42), Msg.Pong(42, 99), Msg.Knock(123456789, 3.5f),
             Msg.Go("bump"), Msg.Meta(77, "ção|x.png", "image/png", 9), Msg.Done,
+            Msg.Link("https://pt.wikipedia.org/wiki/Lisboa?a=1|2", "Lisboa – Wikipédia"), Msg.Text("olá\nmundo | 2"),
         )
         for (m in msgs) assertEquals(m, Protocol.decode(Protocol.encode(m)))
     }
@@ -118,6 +119,23 @@ class BumpLogicTest {
         assertNull(Protocol.decode("BUMP4|PAIR|xyz".toByteArray()))
         assertNull(Protocol.decode("BUMP4|PING|notanumber".toByteArray()))
         assertNull(Protocol.decode("BUMP4|META|1|%%%|x|2".toByteArray()))
+    }
+
+    @Test fun linksAreValidatedAndExtracted() {
+        assertNull(Protocol.decode(Protocol.encode(Msg.Link("javascript:alert(1)", "x"))))
+        assertNull(Protocol.decode(Protocol.encode(Msg.Link("file:///sdcard/a", "x"))))
+        assertEquals("https://example.com/a?b=1", Protocol.findUrl("Vê isto: https://example.com/a?b=1."))
+        assertEquals("https://chrome.example/page", Protocol.findUrl("https://chrome.example/page"))
+        assertNull(Protocol.findUrl("sem link aqui"))
+    }
+
+    @Test fun previewRoundTrip() {
+        val jpeg = ByteArray(5000) { (it % 251).toByte() }
+        val wire = Protocol.encodePreview(jpeg)!!
+        assertTrue(jpeg.contentEquals(Protocol.decodePreview(wire)!!))
+        assertNull(Protocol.decode(wire)) // never mistaken for a control message
+        assertNull(Protocol.decodePreview(Protocol.encode(Msg.Done)))
+        assertNull(Protocol.encodePreview(ByteArray(Protocol.MAX_PREVIEW_BYTES + 1)))
     }
 
     @Test fun proofIsBoundToAuthor() {

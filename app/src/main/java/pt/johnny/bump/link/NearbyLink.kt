@@ -53,6 +53,7 @@ class NearbyLink(context: Context, val role: Role, private val listener: Listene
         fun onConnecting(remote: Remote) {}
         fun onReady(remote: Remote) {}
         fun onControl(msg: Msg) {}
+        fun onPreview(jpeg: ByteArray) {}
         fun onIncomingStarted(name: String, mime: String) {}
         fun onProgress(fraction: Float, bytes: Long, total: Long) {}
         fun onFileSaved(name: String, mime: String, size: Long, uri: Uri) {}
@@ -168,6 +169,13 @@ class NearbyLink(context: Context, val role: Role, private val listener: Listene
         val r = remote ?: return
         if (closed || !connected) return
         client.sendPayload(r.endpointId, Payload.fromBytes(Protocol.encode(msg)))
+    }
+
+    fun sendPreview(jpeg: ByteArray) {
+        val r = remote ?: return
+        if (closed || !authenticated) return
+        val wire = Protocol.encodePreview(jpeg) ?: return
+        client.sendPayload(r.endpointId, Payload.fromBytes(wire))
     }
 
     /** Burst of pings: the best round trip gives a tight clock offset for bump correlation. */
@@ -368,7 +376,12 @@ class NearbyLink(context: Context, val role: Role, private val listener: Listene
             main.post {
                 if (closed || remote?.endpointId != endpointId) return@post
                 when (payload.type) {
-                    Payload.Type.BYTES -> payload.asBytes()?.let { Protocol.decode(it) }?.let(::handle)
+                    Payload.Type.BYTES -> {
+                        val bytes = payload.asBytes() ?: return@post
+                        val preview = Protocol.decodePreview(bytes)
+                        if (preview != null) { if (authenticated && role == Role.RECEIVER) listener.onPreview(preview) }
+                        else Protocol.decode(bytes)?.let(::handle)
+                    }
                     Payload.Type.FILE -> {
                         if (!authenticated || role != Role.RECEIVER) { client.cancelPayload(payload.id); return@post }
                         incoming[payload.id] = payload

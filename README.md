@@ -43,6 +43,22 @@ sem nomes nem indicadores, e o tablet não mostra nada. O destino só aparece qu
 Os parâmetros (velocidade, amplitude, nitidez, largura, distorção, brilho, tempo de carga) afinam-se em
 **Definições › Laboratório da animação** e podem ser guardados para as transferências reais.
 
+## O que acontece no toque
+
+- **Telemóvel**: a foto, a primeira página do PDF ou o cartão do link aparecem em grande por cima da
+  folha. No toque, o item é sugado para o notch (posição real do recorte da câmara, lida das
+  `DisplayCutout`) enquanto o brilho carrega; a onda rebenta do notch.
+- **Tablet**: a pré-visualização chegou em silêncio antes do toque (JPEG ≤ 400 KB numa mensagem de
+  bytes). Na libertação sai do topo com uma mola, assenta no meio com o progresso e, quando o ficheiro
+  chega, cresce até ocupar o ecrã e abre logo no visualizador (fotos, vídeos, PDFs, áudio, links).
+  Apps (.apk) nunca abrem sozinhas. Com o ecrã bloqueado fica só a notificação.
+- **Links do Chrome**: Partilhar › BUMP envia o URL (só http/https); abre no navegador do tablet.
+  **Texto** simples vai para a área de transferência.
+- Desliga em **Definições › Receção › Abrir logo ao receber**.
+
+O Android não deixa uma app ver o que está aberto noutra, por isso o ponto de partida é sempre
+Partilhar › BUMP no ecrã onde está o PDF ou a foto.
+
 ## Som e movimento
 
 - **Sons** (`res/raw`, OGG): `bump_send` (libertação), `bump_sent`, `bump_received`, `bump_error`.

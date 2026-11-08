@@ -68,6 +68,9 @@ class ReceiverService : Service(), NearbyLink.Listener {
     private var windowManager: WindowManager? = null
     private var overlay: NameDropView? = null
     private var peerName: String? = null
+    /** Preview the sender pushed before the bump, so the item can appear the instant they touch. */
+    private var preview: android.graphics.Bitmap? = null
+    private var linkHost = ""
     private val removeOverlay = Runnable { hideOverlay() }
     private val disarmTimeout = Runnable { disarm() }
     private val calmBeacon = Runnable { if (running) beacon.advertise(token, active = false) }
@@ -199,11 +202,23 @@ class ReceiverService : Service(), NearbyLink.Listener {
             is Msg.Arm -> arm(msg)
             Msg.Disarm -> disarm()
             is Msg.Go -> incoming()
+            is Msg.Link -> linkReceived(msg)
+            is Msg.Text -> textReceived(msg)
             else -> Unit
         }
     }
 
+    override fun onPreview(jpeg: ByteArray) {
+        Thread {
+            val opts = android.graphics.BitmapFactory.Options().apply { inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888 }
+            val b = runCatching { android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, opts) }.getOrNull()
+            main.post { if (b != null) { preview = b; overlay?.setHeroImage(b) } }
+        }.start()
+    }
+
     private fun arm(m: Msg.Arm) {
+        preview = null
+        linkHost = if (m.firstMime == Files.LINK_MIME) m.firstName else ""
         armed = true
         armedName = if (m.count > 1) "${m.count} ficheiros" else m.firstName
         armedMime = m.firstMime
@@ -230,33 +245,78 @@ class ReceiverService : Service(), NearbyLink.Listener {
         showOverlay(params)
     }
 
+    private fun locked() = getSystemService(android.app.KeyguardManager::class.java)?.isKeyguardLocked == true
+
+    /**
+     * Shared finish for files and links: wait until the item has landed on screen, then either
+     * grow it to full screen and open it (photos, videos, PDFs, links) or show it with a button.
+     */
+    private fun deliver(name: String, mime: String, detail: String, open: () -> Unit) {
+        val p = RippleParams.load(this)
+        val landedMs = ((p.chargeSeconds + 0.9f) * 1000).toLong()
+        val wait = (landedMs - (SystemClock.elapsedRealtime() - waveStartedAt)).coerceAtLeast(0)
+        val direct = app.settings.current.autoOpen && Files.opensDirectly(name, mime) && !locked()
+        main.postDelayed({
+            app.feedback.play(Cue.RECEIVED)
+            val o = overlay
+            when {
+                o != null && direct -> o.expandThen {
+                    open()
+                    main.postDelayed({ hideOverlay() }, 380)
+                }
+                o != null -> {
+                    o.setFile(name, mime)
+                    o.showDone(detail, Files.openLabel(name, mime)) { hideOverlay(); open() }
+                    main.removeCallbacks(removeOverlay)
+                    main.postDelayed(removeOverlay, 9000)
+                }
+                direct -> open() // no overlay permission: still open it if Android allows
+            }
+        }, wait)
+    }
+
+    private fun openItem(uri: Uri, name: String, mime: String) {
+        runCatching { startActivity(OpenFileActivity.intent(this, uri, name, mime).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+    }
+
+    private fun linkReceived(m: Msg.Link) {
+        val host = runCatching { Uri.parse(m.url).host.orEmpty().removePrefix("www.") }.getOrDefault("")
+        val title = m.title.ifBlank { host }
+        val uri = Uri.parse(m.url)
+        app.transfers.add(pt.johnny.bump.data.Transfer(java.util.UUID.randomUUID().toString(), pt.johnny.bump.data.Direction.RECEIVED, title, Files.LINK_MIME, 0, m.url, peerName.orEmpty(), System.currentTimeMillis()))
+        publish("Recebido: $title")
+        overlay?.apply { setLinkHost(host); setFile(title, Files.LINK_MIME) }
+        notifyReceived(title, Files.LINK_MIME, uri)
+        deliver(title, Files.LINK_MIME, host) { openItem(uri, title, Files.LINK_MIME) }
+    }
+
+    private fun textReceived(m: Msg.Text) {
+        val cm = getSystemService(android.content.ClipboardManager::class.java)
+        runCatching { cm?.setPrimaryClip(android.content.ClipData.newPlainText("BUMP", m.text)) }
+        publish("Texto copiado")
+        overlay?.let {
+            it.setFile("", Files.TEXT_MIME)
+            it.showDone("Copiado para a área de transferência", null, null)
+            main.removeCallbacks(removeOverlay)
+            main.postDelayed(removeOverlay, 3500)
+        }
+        app.feedback.play(Cue.RECEIVED)
+    }
+
     override fun onIncomingStarted(name: String, mime: String) {
         overlay?.setFile(name, mime)
     }
 
     override fun onProgress(fraction: Float, bytes: Long, total: Long) {
         overlay?.setProgress(fraction)
+        overlay?.setHeadline(peerName ?: "Outro dispositivo", "${Files.humanSize(bytes)} de ${Files.humanSize(total)}")
     }
 
     override fun onFileSaved(name: String, mime: String, size: Long, uri: Uri) {
         publish("Recebido: $name")
         notifyReceived(name, mime, uri)
-        val p = RippleParams.load(this)
-        val cardVisibleMs = ((p.chargeSeconds + p.rippleSeconds * 0.3f + 0.55f) * 1000).toLong()
-        val wait = (cardVisibleMs - (SystemClock.elapsedRealtime() - waveStartedAt)).coerceAtLeast(0)
-        loadThumb(uri) { bmp -> overlay?.setThumbnail(bmp) }
-        main.postDelayed({
-            app.feedback.play(Cue.RECEIVED)
-            overlay?.let {
-                it.setFile(name, mime)
-                it.showDone("De ${peerName ?: "outro dispositivo"} · ${Files.humanSize(size)}", Files.openLabel(name, mime)) {
-                    hideOverlay()
-                    runCatching { startActivity(OpenFileActivity.intent(this, uri, name, mime).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-                }
-                main.removeCallbacks(removeOverlay)
-                main.postDelayed(removeOverlay, 9000)
-            }
-        }, wait)
+        if (preview == null) loadThumb(uri) { bmp -> preview = bmp; overlay?.setHeroImage(bmp) }
+        deliver(name, mime, "De ${peerName ?: "outro dispositivo"} · ${Files.humanSize(size)}") { openItem(uri, name, mime) }
     }
 
     private fun loadThumb(uri: Uri, done: (android.graphics.Bitmap?) -> Unit) {
@@ -314,8 +374,11 @@ class ReceiverService : Service(), NearbyLink.Listener {
         hideOverlay()
         val view = NameDropView(this).apply {
             this.params = params
+            configure(NameDropView.Role.RECEIVER, null, null)
             setFile(armedName, armedMime)
-            setHeadline("A receber", "De ${peerName ?: "outro dispositivo"}")
+            if (armedMime == Files.LINK_MIME) setLinkHost(linkHost)
+            setHeroImage(preview)
+            setHeadline(peerName ?: "Outro dispositivo", "A receber…")
             onReleaseCue = { app.feedback.play(Cue.BUMP) }
             // Once the choreography is over, a tap anywhere dismisses (a long transfer keeps going).
             setOnClickListener { if (!isRunning) hideOverlay() }

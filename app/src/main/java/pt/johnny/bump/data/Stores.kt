@@ -66,6 +66,8 @@ class AppSettings(context: Context) {
         val bumpSensitivity: Int,
         val onboarded: Boolean,
         val displayName: String,
+        /** Photos, videos, PDFs and links open the moment they land. */
+        val autoOpen: Boolean,
     )
 
     private val _values = MutableStateFlow(read())
@@ -80,6 +82,7 @@ class AppSettings(context: Context) {
         bumpSensitivity = p.getInt("bump", 1),
         onboarded = p.getBoolean("onboarded", false),
         displayName = p.getString("name", "") ?: "",
+        autoOpen = p.getBoolean("autoOpen", true),
     )
 
     fun update(edit: SharedPreferences.Editor.() -> Unit) {
@@ -92,6 +95,7 @@ class AppSettings(context: Context) {
     fun setHaptics(v: Boolean) = update { putBoolean("haptics", v) }
     fun setRssi(v: Int) = update { putInt("rssi", v.coerceIn(-80, -45)) }
     fun setBump(v: Int) = update { putInt("bump", v.coerceIn(0, 2)) }
+    fun setAutoOpen(v: Boolean) = update { putBoolean("autoOpen", v) }
     fun setOnboarded() = update { putBoolean("onboarded", true) }
     fun setDisplayName(v: String) = update { putString("name", v.trim().take(32)) }
 

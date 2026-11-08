@@ -29,6 +29,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.ui.unit.IntOffset
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -102,8 +109,22 @@ class ShareActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        vm.load(sharedUris(intent))
+        vm.load(sharedInput(intent))
         setContent { BumpTheme { ShareSheet(vm, onClose = ::finish) } }
+    }
+
+    /** Files first; otherwise a web page (Chrome sends the URL as text, the title as subject) or plain text. */
+    private fun sharedInput(i: Intent?): ShareInput {
+        val uris = sharedUris(i)
+        if (uris.isNotEmpty() || i == null) return ShareInput.Items(uris)
+        val text = i.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString().orEmpty()
+        val subject = i.getStringExtra(Intent.EXTRA_SUBJECT).orEmpty()
+        val url = pt.johnny.bump.link.Protocol.findUrl(text)
+        return when {
+            url != null -> ShareInput.Link(url, subject.ifBlank { text.replace(url, "").trim().take(120) })
+            text.isNotBlank() -> ShareInput.Text(text)
+            else -> ShareInput.Items(emptyList())
+        }
     }
 
     @Suppress("DEPRECATION")
@@ -130,6 +151,9 @@ private fun ShareSheet(vm: ShareViewModel, onClose: () -> Unit) {
     LaunchedEffect(s.phase) { if (s.phase == Phase.SENT) { delay(1800); onClose() } }
 
     val handoff = s.waveTick > 0 // the bump happened: NameDrop takes over the whole screen
+    // Where the big preview sits, so NameDrop starts the "pull into the notch" from exactly there.
+    var heroRect by remember { mutableStateOf<android.graphics.RectF?>(null) }
+    val hostView = androidx.compose.ui.platform.LocalView.current
 
     // Sheet physics: springs in, follows the finger, and leaves with the finger's velocity.
     val scope = rememberCoroutineScope()
@@ -160,6 +184,18 @@ private fun ShareSheet(vm: ShareViewModel, onClose: () -> Unit) {
                 Modifier.fillMaxSize().background(Color.Black.copy(alpha = .38f * shown))
                     .clickable(remember { MutableInteractionSource() }, null) { dismiss() },
             )
+            // The item itself, large, floating above the sheet ("aparece a foto").
+            val sheetDp = with(androidx.compose.ui.platform.LocalDensity.current) { sheetHeight.toDp() }
+            Box(
+                Modifier.fillMaxSize().padding(bottom = sheetDp).statusBarsPadding().padding(24.dp)
+                    .graphicsLayer { alpha = shown; translationY = (1f - shown) * 80f },
+                contentAlignment = Alignment.Center,
+            ) {
+                HeroPreview(s, Modifier.onGloballyPositioned { c ->
+                    val b = c.boundsInRoot()
+                    heroRect = android.graphics.RectF(b.left, b.top, b.right, b.bottom)
+                })
+            }
             Surface(
                 Modifier.align(Alignment.BottomCenter).widthIn(max = 560.dp).fillMaxWidth()
                     .onSizeChanged { sheetHeight = it.height.toFloat() }
@@ -219,18 +255,16 @@ private fun ShareSheet(vm: ShareViewModel, onClose: () -> Unit) {
                 factory = { c ->
                     NameDropView(c).apply {
                         params = vm.ripple
+                        configure(NameDropView.Role.SENDER, notchPoint(hostView), heroRect)
                         setFile(s.firstName, s.firstMime)
+                        setLinkHost(s.linkHost)
+                        setHeroImage(s.preview)
                         setHeadline("A enviar", "Para ${s.target?.name ?: "outro dispositivo"}")
                         play()
-                        val uri = s.firstUri
-                        if (uri != null && Build.VERSION.SDK_INT >= 29) Thread {
-                            runCatching { c.contentResolver.loadThumbnail(uri, android.util.Size(384, 384), null) }.getOrNull()
-                                ?.let { b -> post { setThumbnail(b) } }
-                        }.start()
                     }
                 },
                 update = { v ->
-                    v.setHeadline(if (s.phase == Phase.SENT) s.title else "A enviar", "Para ${s.target?.name ?: "outro dispositivo"}")
+                    v.setHeadline(if (s.phase == Phase.SENT) "Enviado" else "A enviar", "Para ${s.target?.name ?: "outro dispositivo"}")
                     if (s.progress > 0f) v.setProgress(s.progress)
                     when (s.phase) {
                         Phase.SENT -> if (v.tag != "done") { v.tag = "done"; v.showDone("Para ${s.target?.name ?: "outro dispositivo"}", null, null) }
@@ -246,11 +280,55 @@ private fun ShareSheet(vm: ShareViewModel, onClose: () -> Unit) {
     }
 }
 
+/** Centre of the camera cutout (the "notch"), in window coordinates; null when there is none. */
+private fun notchPoint(view: android.view.View): android.graphics.PointF? {
+    if (Build.VERSION.SDK_INT < 28) return null
+    val rects = view.rootWindowInsets?.displayCutout?.boundingRects ?: return null
+    val top = rects.minByOrNull { it.top } ?: return null
+    if (top.top > view.height / 4) return null // a side or bottom cutout is not where the devices touch
+    return android.graphics.PointF(top.exactCenterX(), top.exactCenterY())
+}
+
+/** The big preview: photo, video frame, PDF first page, link card, or a large kind tile. */
+@Composable
+private fun HeroPreview(s: ShareState, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(24.dp)
+    val bmp = s.preview
+    when {
+        bmp != null -> {
+            val ratio = (bmp.width.toFloat() / bmp.height).coerceIn(0.56f, 1.8f)
+            androidx.compose.foundation.Image(
+                bmp.asImageBitmap(), null,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = modifier.widthIn(max = 440.dp).fillMaxWidth(0.8f).aspectRatio(ratio)
+                    .shadow(24.dp, shape).clip(shape),
+            )
+        }
+        s.firstMime == Files.LINK_MIME -> Surface(
+            modifier.widthIn(max = 420.dp).fillMaxWidth(0.8f).aspectRatio(1.55f), shape = shape, shadowElevation = 24.dp, color = Color.White,
+        ) {
+            Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Box(Modifier.size(56.dp).background(Brand.Blue, CircleShape), contentAlignment = Alignment.Center) {
+                    Text(s.linkHost.take(1).uppercase(), color = Color.White, style = MaterialTheme.typography.titleLarge)
+                }
+                Text(s.linkHost, style = MaterialTheme.typography.titleMedium, color = Brand.Ink, modifier = Modifier.padding(top = 12.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(s.firstName, style = MaterialTheme.typography.bodySmall, color = Color(0xFF606C82), maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+            }
+        }
+        s.firstMime == Files.TEXT_MIME -> Surface(
+            modifier.widthIn(max = 420.dp).fillMaxWidth(0.8f), shape = shape, shadowElevation = 24.dp, color = Color.White,
+        ) {
+            Text("“${s.firstName}”", style = MaterialTheme.typography.bodyLarge, color = Brand.Ink, maxLines = 6, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(22.dp))
+        }
+        else -> pt.johnny.bump.ui.KindTile(s.firstName, s.firstMime, modifier.shadow(24.dp, RoundedCornerShape(40.dp)), size = 132.dp)
+    }
+}
+
 @Composable
 private fun FileHeader(s: ShareState, onClose: () -> Unit) {
+    // The big preview floats above the sheet, so the header is just the name and size.
     Row(Modifier.fillMaxWidth().padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-        FileThumb(s.firstUri, s.firstName, s.firstMime)
-        Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
+        Column(Modifier.weight(1f).padding(start = 4.dp, end = 14.dp)) {
             Text(
                 if (s.fileCount > 1) "${s.fileCount} ficheiros" else s.firstName.ifBlank { "Ficheiro" },
                 style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -272,7 +350,7 @@ private fun FileHeader(s: ShareState, onClose: () -> Unit) {
 @Composable
 private fun BumpPrompt(s: ShareState, vm: ShareViewModel) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        BumpIllustration(Modifier.size(150.dp))
+        BumpIllustration(Modifier.size(104.dp))
         Text("Encosta ao outro dispositivo", style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
         Text(
             when {

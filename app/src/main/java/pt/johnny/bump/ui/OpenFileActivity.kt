@@ -24,6 +24,11 @@ class OpenFileActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         name = intent.getStringExtra(EXTRA_NAME) ?: "ficheiro"
+        val rawUri = intent.getStringExtra(EXTRA_URI).orEmpty()
+        if (intent.getStringExtra(EXTRA_MIME) == Files.LINK_MIME) {
+            openLink(rawUri)
+            return
+        }
         mime = Files.resolveMime(name, intent.getStringExtra(EXTRA_MIME))
         try {
             uri = Uri.parse(intent.getStringExtra(EXTRA_URI).orEmpty())
@@ -42,6 +47,16 @@ class OpenFileActivity : Activity() {
                 .setOnCancelListener { finish() }
                 .show()
         } else openExternal()
+    }
+
+    private fun openLink(url: String) {
+        if (!pt.johnny.bump.link.Protocol.isWebUrl(url)) { fail("Este link não é válido."); return }
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE))
+            finish()
+        } catch (_: ActivityNotFoundException) {
+            fail("Não há nenhum navegador instalado.")
+        }
     }
 
     private fun openInstaller() {

@@ -12,6 +12,7 @@ import android.graphics.LinearGradient
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.PointF
 import android.graphics.PorterDuff
 import android.graphics.RadialGradient
 import android.graphics.RectF
@@ -50,6 +51,8 @@ object Palette {
         Files.Kind.VIDEO -> Color.rgb(245, 124, 0)
         Files.Kind.AUDIO -> Color.rgb(0, 150, 136)
         Files.Kind.APK -> Color.rgb(46, 160, 67)
+        Files.Kind.LINK -> Color.rgb(0, 122, 255)
+        Files.Kind.TEXT -> Color.rgb(96, 108, 130)
         Files.Kind.DOC -> ACCENT
     }
 }
@@ -97,17 +100,20 @@ data class RippleParams(
 }
 
 /**
- * NameDrop-style handoff, shown full screen on BOTH devices at the moment of the bump.
+ * NameDrop-style handoff, full screen on BOTH devices at the moment of the bump.
  *
- *  1. Charge  – a white glow with an iridescent rim swells at the top edge (where the devices touch).
- *  2. Release – the glow bursts and a refractive ring travels down the screen, bending and
- *               brightening everything it crosses (AGSL RuntimeShader, Android 13+).
- *  3. Card    – the file card settles in the middle: progress, then done.
+ *  Sender   – the shared item (photo, PDF page, link card) is pulled into the notch while the
+ *             glow charges there; at the release the ripple bursts out of the notch.
+ *  Receiver – the glow charges at the top edge; at the release the ripple sweeps down and the
+ *             same item springs out of the top, settles in the middle, and (for things that
+ *             open directly) grows to fill the screen before the real viewer takes over.
  *
- * The ripple math is a port of the shockwave used by Georgvm/iOS-NameDrop-Animation and
+ * Ripple math: port of the shockwave in Georgvm/iOS-NameDrop-Animation and
  * cyrilzakka/NameDrop (MIT), itself based on Shadertoy "llj3Dz".
  */
 class NameDropView(context: Context) : FrameLayout(context) {
+
+    enum class Role { SENDER, RECEIVER }
 
     var params: RippleParams = RippleParams.load(context)
     var onChargeComplete: (() -> Unit)? = null
@@ -119,11 +125,11 @@ class NameDropView(context: Context) : FrameLayout(context) {
     private val overscan = dp(60f)
     private val stage = StageView(context)
     private val glow = GlowView(context)
-    private val card = CardView(context)
+    private val hero = HeroLayer(context)
     private val action = TextView(context)
     private var timeline: ValueAnimator? = null
-    private var cardRevealAt = 0f
     private var running = false
+    private var notch: PointF? = null
 
     private val shader: RuntimeShader? =
         if (Build.VERSION.SDK_INT >= 33) runCatching { RuntimeShader(RIPPLE_AGSL) }.getOrNull() else null
@@ -133,7 +139,7 @@ class NameDropView(context: Context) : FrameLayout(context) {
         setBackgroundColor(Color.BLACK)
         addView(stage)
         addView(glow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-        addView(card, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(hero, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         action.apply {
             visibility = GONE
             textSize = 16f
@@ -148,38 +154,55 @@ class NameDropView(context: Context) : FrameLayout(context) {
         addView(action, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL or Gravity.TOP))
     }
 
-    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
-        super.onLayout(changed, l, t, r, b)
-        // The stage is larger than the screen so the distortion never samples past an edge.
-        val o = overscan.toInt()
-        stage.layout(-o, -o, width + o, height + o)
-        action.translationY = card.actionTop() - action.top
-    }
-
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
         val o = (overscan * 2).toInt()
         stage.measure(MeasureSpec.makeMeasureSpec(measuredWidth + o, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(measuredHeight + o, MeasureSpec.EXACTLY))
     }
 
+    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+        super.onLayout(changed, l, t, r, b)
+        // The stage is larger than the screen so the distortion never samples past an edge.
+        val o = overscan.toInt()
+        stage.layout(-o, -o, width + o, height + o)
+        val p = origin()
+        hero.origin.set(p)
+        glow.centerX = p.x; glow.centerY = p.y
+        stage.centerX = p.x + overscan; stage.centerY = p.y + overscan
+        if (action.visibility == VISIBLE && action.animation == null) action.translationY = hero.actionTop() - action.top
+    }
+
+    /** Where the devices touch: the notch if there is one, otherwise just above the top-centre edge. */
+    private fun origin(): PointF = notch ?: PointF(width / 2f, -0.05f * height)
+
     // ---------------------------------------------------------------- content
 
-    fun setFile(name: String, mime: String) { card.name = name; card.mime = mime; card.invalidate() }
-    fun setHeadline(title: String, subtitle: String) { card.title = title; card.subtitle = subtitle; card.invalidate() }
-    fun setThumbnail(bitmap: Bitmap?) { card.thumb = bitmap; card.invalidate() }
-    fun setProgress(value: Float) { card.progress = value; card.invalidate() }
+    fun configure(role: Role, notchPoint: PointF?, startRect: RectF?) {
+        hero.role = role
+        notch = notchPoint
+        hero.startRect = startRect
+        requestLayout()
+    }
+
+    fun setFile(name: String, mime: String) { hero.name = name; hero.mime = mime; hero.invalidate() }
+    fun setHeadline(title: String, subtitle: String) { hero.title = title; hero.subtitle = subtitle; hero.invalidate() }
+    fun setHeroImage(bitmap: Bitmap?) { if (bitmap != null) { hero.image = bitmap; hero.invalidate() } }
+    fun setProgress(value: Float) { hero.progress = value; hero.invalidate() }
+
+    /** Item arrived and opens directly: grow to fill the screen, then hand over to the real viewer. */
+    fun expandThen(then: () -> Unit) {
+        hero.expand(then)
+    }
 
     fun showDone(subtitle: String, actionLabel: String?, onAction: (() -> Unit)?) {
-        card.subtitle = subtitle
-        card.state = CardView.State.DONE
-        card.doneAt = System.nanoTime()
-        card.invalidate()
+        hero.subtitle = subtitle
+        hero.markDone()
         if (actionLabel != null && onAction != null) {
             action.text = actionLabel
             action.setOnClickListener { onAction() }
             action.alpha = 0f
             action.visibility = VISIBLE
-            val baseY = card.actionTop() - action.top
+            val baseY = hero.actionTop() - action.top
             action.translationY = baseY + dp(14f)
             action.animate().alpha(1f).translationY(baseY).setDuration(520).setStartDelay(120)
                 .setInterpolator(pt.johnny.bump.ui.theme.Motion.easeOutInterpolator()).start()
@@ -187,10 +210,8 @@ class NameDropView(context: Context) : FrameLayout(context) {
     }
 
     fun showError(message: String) {
-        card.subtitle = message
-        card.state = CardView.State.ERROR
-        card.reveal = max(card.reveal, 1f)
-        card.invalidate()
+        hero.subtitle = message
+        hero.markError()
         action.visibility = GONE
     }
 
@@ -198,22 +219,19 @@ class NameDropView(context: Context) : FrameLayout(context) {
 
     // ---------------------------------------------------------------- timeline
 
-    /** Charge → release → ripple → card. [onChargeComplete] fires at the release instant. */
+    /** Charge → release → ripple. The hero layer runs its own spring clock from the same instants. */
     fun play() {
         timeline?.cancel()
-        card.state = CardView.State.PROGRESS
-        card.reveal = 0f
-        card.progress = -1f
         action.visibility = GONE
         val p = params
-        cardRevealAt = p.chargeSeconds + p.rippleSeconds * 0.30f
         running = true
         var released = false
         var cued = false
         alpha = 0f
         animate().alpha(1f).setDuration(220).setInterpolator(pt.johnny.bump.ui.theme.Motion.easeOutInterpolator()).start()
+        hero.begin(p.chargeSeconds)
         if (!ValueAnimator.areAnimatorsEnabled()) {
-            onReleaseCue?.invoke(); onChargeComplete?.invoke(); card.reveal = 1f; card.invalidate(); running = false; onFinished?.invoke(); return
+            onReleaseCue?.invoke(); onChargeComplete?.invoke(); hero.release(); running = false; onFinished?.invoke(); return
         }
         timeline = ValueAnimator.ofFloat(0f, p.totalSeconds).apply {
             duration = (p.totalSeconds * 1000).toLong()
@@ -222,14 +240,14 @@ class NameDropView(context: Context) : FrameLayout(context) {
                 val t = it.animatedValue as Float
                 frame(t, p)
                 if (!cued && t >= max(0f, p.chargeSeconds - releaseCueLead)) { cued = true; onReleaseCue?.invoke() }
-                if (!released && t >= p.chargeSeconds) { released = true; onChargeComplete?.invoke() }
+                if (!released && t >= p.chargeSeconds) { released = true; hero.release(); onChargeComplete?.invoke() }
             }
             addListener(object : android.animation.AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: android.animation.Animator) {
                     running = false
                     applyRipple(0f, p)
                     glow.intensity = 0f; glow.invalidate()
-                    card.reveal = 1f; card.invalidate()
+                    if (!released) { released = true; hero.release() }
                     onFinished?.invoke()
                 }
             })
@@ -239,8 +257,8 @@ class NameDropView(context: Context) : FrameLayout(context) {
 
     private fun frame(t: Float, p: RippleParams) {
         var radius = 0f
-        var g: Float
-        var scale: Float
+        val g: Float
+        val scale: Float
         if (t < p.chargeSeconds) {
             val q = t / max(p.chargeSeconds, 0.001f)
             val eased = q * q * (3 - 2 * q)
@@ -257,10 +275,6 @@ class NameDropView(context: Context) : FrameLayout(context) {
         glow.diameter = width * 1.1f * p.glowSize * scale
         glow.invalidate()
         applyRipple(radius, p)
-        // Card rises in behind the wavefront (spring-driven inside CardView).
-        val r = ((t - cardRevealAt) / CardView.REVEAL_SECONDS).coerceIn(0f, 1f)
-        if (r != card.reveal) { card.reveal = r; card.invalidate() }
-        // Fallback for devices without RuntimeShader: draw the wavefront as light.
         if (shader == null) { stage.fallbackRadius = radius; stage.params = p; stage.invalidate() }
     }
 
@@ -268,9 +282,10 @@ class NameDropView(context: Context) : FrameLayout(context) {
         val s = shader ?: return
         if (Build.VERSION.SDK_INT < 33) return
         if (radius <= 0f) { stage.setRenderEffect(null); return }
-        s.setFloatUniform("size", stage.width.toFloat(), stage.height.toFloat())
-        // NameDrop centre: horizontally centred, just above the top edge (normalised to the stage).
-        s.setFloatUniform("center", 0.5f, (overscan - 0.05f * height) / max(stage.height.toFloat(), 1f))
+        val sw = max(stage.width.toFloat(), 1f); val sh = max(stage.height.toFloat(), 1f)
+        val o = origin()
+        s.setFloatUniform("size", sw, sh)
+        s.setFloatUniform("center", (o.x + overscan) / sw, (o.y + overscan) / sh)
         s.setFloatUniform("time", radius)
         s.setFloatUniform("amplitude", p.amplitude)
         s.setFloatUniform("sharpness", p.sharpness)
@@ -293,6 +308,8 @@ class NameDropView(context: Context) : FrameLayout(context) {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         var fallbackRadius = 0f
         var params = RippleParams()
+        var centerX = 0f
+        var centerY = 0f
         private var dots: Bitmap? = null
 
         override fun onDraw(c: Canvas) {
@@ -333,10 +350,10 @@ class NameDropView(context: Context) : FrameLayout(context) {
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = params.width * h * .5f
             paint.color = Color.argb((60 * k).toInt(), 255, 255, 255)
-            c.drawCircle(w / 2, -0.05f * h, rPx, paint)
+            c.drawCircle(centerX, centerY, rPx, paint)
             paint.strokeWidth = resources.displayMetrics.density * 2
             paint.color = Color.argb((200 * k).toInt(), 255, 255, 255)
-            c.drawCircle(w / 2, -0.05f * h, rPx, paint)
+            c.drawCircle(centerX, centerY, rPx, paint)
             paint.style = Paint.Style.FILL
         }
     }
@@ -347,6 +364,8 @@ class NameDropView(context: Context) : FrameLayout(context) {
     private class GlowView(context: Context) : View(context) {
         var intensity = 0f
         var diameter = 0f
+        var centerX = 0f
+        var centerY = 0f
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
         init {
@@ -358,8 +377,8 @@ class NameDropView(context: Context) : FrameLayout(context) {
         override fun onDraw(c: Canvas) {
             val a = intensity.coerceIn(0f, 1f)
             if (a < 0.001f || diameter < 1f) return
-            val cx = width / 2f
-            val cy = -0.05f * height
+            val cx = centerX
+            val cy = centerY
             val d = diameter
             fun white(alpha: Float) = Color.argb((alpha * a * 255).toInt().coerceIn(0, 255), 255, 255, 255)
 
@@ -389,118 +408,263 @@ class NameDropView(context: Context) : FrameLayout(context) {
         }
     }
 
-    // ---------------------------------------------------------------- file card
+    // ---------------------------------------------------------------- hero (the shared item)
 
-    private class CardView(context: Context) : View(context) {
-        companion object { const val REVEAL_SECONDS = 1.1f }
-        enum class State { PROGRESS, DONE, ERROR }
-        var state = State.PROGRESS
-        var reveal = 0f
-        var title = ""
-        var subtitle = ""
+    private class HeroLayer(context: Context) : View(context) {
+        var role = Role.RECEIVER
+        val origin = PointF()
+        var startRect: RectF? = null
+        var image: Bitmap? = null
         var name = "Ficheiro"
         var mime = ""
+        var title = ""
+        var subtitle = ""
         var progress = -1f
-        var thumb: Bitmap? = null
-        var doneAt = 0L
+
+        private var chargeS = 1.2f
+        private var beganAt = 0L
+        private var releasedAt = 0L
+        private var doneAt = 0L
+        private var expandAt = 0L
+        private var done = false
+        private var error = false
+        private var onExpanded: (() -> Unit)? = null
+        private var expandedFired = false
+
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val text = Paint(Paint.ANTI_ALIAS_FLAG)
-        private val rect = RectF()
         private val path = Path()
         private val medium = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        private val bold = Typeface.create("sans-serif", Typeface.BOLD)
         private val regular = Typeface.create("sans-serif", Typeface.NORMAL)
 
-        private fun cardRect(): RectF {
+        fun begin(charge: Float) {
+            chargeS = charge; beganAt = System.nanoTime(); releasedAt = 0L; doneAt = 0L; expandAt = 0L
+            done = false; error = false; onExpanded = null; expandedFired = false; progress = -1f
+            invalidate()
+        }
+        fun release() { if (releasedAt == 0L) releasedAt = System.nanoTime(); invalidate() }
+        fun markDone() { done = true; doneAt = System.nanoTime(); invalidate() }
+        fun markError() { error = true; release(); invalidate() }
+        fun expand(then: () -> Unit) { if (expandAt == 0L) { expandAt = System.nanoTime(); onExpanded = then }; invalidate() }
+        fun actionTop(): Float = restRect().bottom + dp(108f)
+
+        private fun secs(from: Long) = if (from == 0L) -1f else (System.nanoTime() - from) / 1e9f
+        private fun kind() = Files.kind(name, mime)
+        private fun showsPicture() = image != null || kind() == Files.Kind.LINK
+
+        private fun aspect(): Float = image?.let { (it.width.toFloat() / it.height).coerceIn(0.56f, 1.8f) }
+            ?: if (kind() == Files.Kind.LINK) 1.55f else 1f
+
+        private fun restRect(): RectF {
             val w = width.toFloat(); val h = height.toFloat()
-            val cw = min(w - dp(48f), dp(360f))
-            val ch = dp(292f)
-            val top = h * .5f - ch * .58f
-            return RectF(w / 2 - cw / 2, top, w / 2 + cw / 2, top + ch)
+            val a = aspect()
+            var rw = if (showsPicture()) min(w * 0.74f, dp(440f)) else dp(132f)
+            var rh = rw / a
+            val maxH = h * 0.46f
+            if (rh > maxH) { rh = maxH; rw = rh * a }
+            val cy = h * 0.40f
+            return RectF(w / 2 - rw / 2, cy - rh / 2, w / 2 + rw / 2, cy + rh / 2)
         }
 
-        fun actionTop(): Float = cardRect().bottom + dp(20f)
+        /** The item fitted to the whole screen, like a viewer would show it. */
+        private fun fullRect(): RectF {
+            val w = width.toFloat(); val h = height.toFloat()
+            if (!showsPicture()) return RectF(0f, 0f, w, h)
+            val a = aspect()
+            var rw = w; var rh = w / a
+            if (rh > h) { rh = h; rw = h * a }
+            return RectF(w / 2 - rw / 2, h / 2 - rh / 2, w / 2 + rw / 2, h / 2 + rh / 2)
+        }
 
         override fun onDraw(c: Canvas) {
-            if (reveal <= 0f) return
-            val secs = reveal.coerceIn(0f, 1f) * REVEAL_SECONDS
-            // Position and scale ride a slightly bouncy spring; opacity uses the long ease-out (never overshoots).
-            val m = pt.johnny.bump.ui.theme.Motion.springStep(secs, response = 0.55f, dampingFraction = 0.74f)
-            val r = pt.johnny.bump.ui.theme.Motion.easeOut(secs / 0.35f)
-            if (r <= 0.001f) return
-            val box = cardRect()
-            c.save()
-            c.translate(0f, (1 - m) * dp(44f))
-            c.scale(.9f + .1f * m, .9f + .1f * m, box.centerX(), box.centerY())
-            val alpha = (r * 255).toInt()
-
-            paint.setShadowLayer(dp(30f), 0f, dp(14f), Color.argb((alpha * .35f).toInt(), 0, 0, 0))
-            paint.color = Color.argb((alpha * .96f).toInt(), 250, 251, 255)
-            c.drawRoundRect(box, dp(34f), dp(34f), paint)
-            paint.clearShadowLayer()
-
-            // Thumbnail or kind tile
-            val s = dp(96f)
-            rect.set(box.centerX() - s / 2, box.top + dp(30f), box.centerX() + s / 2, box.top + dp(30f) + s)
-            val kind = Files.kind(name, mime)
-            val tint = Palette.kindColor(kind)
-            val b = thumb
-            if (b != null) {
-                val m = Matrix()
-                val scale = max(rect.width() / b.width, rect.height() / b.height)
-                m.setScale(scale, scale)
-                m.postTranslate(rect.centerX() - b.width * scale / 2, rect.centerY() - b.height * scale / 2)
-                paint.shader = BitmapShader(b, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply { setLocalMatrix(m) }
-                paint.alpha = alpha
-                c.drawRoundRect(rect, dp(26f), dp(26f), paint)
-                paint.shader = null; paint.alpha = 255
-            } else {
-                paint.color = withAlpha(tint, .13f * r)
-                c.drawRoundRect(rect, dp(26f), dp(26f), paint)
-                label(c, kind.label, rect.centerX(), rect.centerY() + dp(8f), 22f, withAlpha(tint, r), medium, rect.width(), Paint.Align.CENTER)
-            }
-
-            // Progress ring / done check / error mark around the tile
-            val ring = RectF(rect.left - dp(7f), rect.top - dp(7f), rect.right + dp(7f), rect.bottom + dp(7f))
-            paint.style = Paint.Style.STROKE; paint.strokeCap = Paint.Cap.ROUND; paint.strokeWidth = dp(3.5f)
-            when (state) {
-                State.PROGRESS -> if (progress >= 0f) {
-                    paint.color = withAlpha(Palette.ACCENT, .15f * r); c.drawRoundRect(ring, dp(32f), dp(32f), paint)
-                    path.reset(); path.addRoundRect(ring, dp(32f), dp(32f), Path.Direction.CW)
-                    val pm = android.graphics.PathMeasure(path, false)
-                    val seg = Path(); pm.getSegment(0f, pm.length * progress.coerceIn(0f, 1f), seg, true)
-                    paint.color = withAlpha(Palette.ACCENT, r); c.drawPath(seg, paint)
-                }
-                State.DONE -> {
-                    val raw = ((System.nanoTime() - doneAt) / 550_000_000f).coerceIn(0f, 1f)
-                    val k = pt.johnny.bump.ui.theme.Motion.easeOut(raw)
-                    paint.color = withAlpha(Palette.SUCCESS, r); c.drawRoundRect(ring, dp(32f), dp(32f), paint)
-                    val cx = rect.right - dp(4f); val cy = rect.bottom - dp(4f)
-                    paint.style = Paint.Style.FILL; c.drawCircle(cx, cy, dp(17f), paint)
-                    paint.style = Paint.Style.STROKE; paint.color = Color.WHITE; paint.strokeWidth = dp(3f); paint.strokeJoin = Paint.Join.ROUND
-                    path.reset(); path.moveTo(cx - dp(7f), cy)
-                    val a1 = min(1f, k * 2); path.lineTo(cx - dp(7f) + dp(5f) * a1, cy + dp(5f) * a1)
-                    if (k > .5f) { val a2 = (k - .5f) * 2; path.lineTo(cx - dp(2f) + dp(10f) * a2, cy + dp(5f) - dp(11f) * a2) }
-                    c.drawPath(path, paint)
-                    if (raw < 1f) postInvalidateOnAnimation()
-                }
-                State.ERROR -> { paint.color = withAlpha(Palette.DANGER, r); c.drawRoundRect(ring, dp(32f), dp(32f), paint) }
-            }
-            paint.style = Paint.Style.FILL
-
-            val maxW = box.width() - dp(40f)
-            label(c, title, box.centerX(), rect.bottom + dp(44f), 19f, withAlpha(Palette.INK, r), medium, maxW, Paint.Align.CENTER)
-            label(c, name, box.centerX(), rect.bottom + dp(70f), 14f, withAlpha(Palette.INK, .85f * r), regular, maxW, Paint.Align.CENTER)
-            label(c, subtitle, box.centerX(), rect.bottom + dp(93f), 13f, withAlpha(if (state == State.ERROR) Palette.DANGER else Palette.MUTED, r), regular, maxW, Paint.Align.CENTER)
-            c.restore()
+            if (width == 0 || beganAt == 0L) return
+            val more = if (role == Role.SENDER) drawSender(c) else drawReceiver(c)
+            if (more) postInvalidateOnAnimation()
         }
 
+        // ---- sender: the item is pulled into the notch during the charge
+
+        private fun drawSender(c: Canvas): Boolean {
+            val tb = secs(beganAt)
+            val u = (tb / max(chargeS, 0.05f)).coerceIn(0f, 1f)
+            if (releasedAt == 0L || u < 1f) {
+                val start = startRect ?: restRect()
+                // A breath of anticipation, then an accelerating pull (ease-in: things leaving speed up).
+                val swell = 1f + 0.035f * sin(min(u / 0.3f, 1f) * PI.toFloat())
+                val k0 = ((u - 0.3f) / 0.7f).coerceIn(0f, 1f)
+                val k = k0 * k0 * k0
+                val dot = dp(20f)
+                val cx = lerp(start.centerX(), origin.x, k)
+                val cy = lerp(start.centerY(), origin.y, k)
+                // Stretch along the pull for a liquid feel.
+                val stretch = 1f + 0.18f * sin(k * PI.toFloat())
+                val rw = lerp(start.width() * swell, dot, k) / stretch
+                val rh = lerp(start.height() * swell, dot, k) * stretch
+                val rect = RectF(cx - rw / 2, cy - rh / 2, cx + rw / 2, cy + rh / 2)
+                val radius = lerp(dp(24f), min(rw, rh) / 2, k)
+                val a = 1f - smooth((k - 0.82f) / 0.18f)
+                drawItem(c, rect, radius, a)
+                return true
+            }
+            // After the release: a quiet status in the middle while the bytes travel.
+            val e = secs(releasedAt)
+            val a = pt.johnny.bump.ui.theme.Motion.easeOut((e - 0.5f) / 0.6f)
+            if (a > 0f) {
+                val w = width.toFloat(); val cy = height * 0.46f
+                if (done || error) {
+                    val k = pt.johnny.bump.ui.theme.Motion.springStep(secs(doneAt).coerceAtLeast(0f), 0.45f, 0.7f)
+                    drawBadge(c, w / 2, cy - dp(64f), dp(34f) * k.coerceAtLeast(0f), a, if (error) Palette.DANGER else Palette.SUCCESS, !error, secs(doneAt))
+                }
+                label(c, title, w / 2, cy, 22f, white(a), bold, w - dp(48f))
+                label(c, subtitle, w / 2, cy + dp(28f), 15f, white(.75f * a), regular, w - dp(48f))
+                if (!done && !error) {
+                    val bw = dp(180f); val y = cy + dp(54f)
+                    paint.color = white(.22f * a); c.drawRoundRect(w / 2 - bw / 2, y, w / 2 + bw / 2, y + dp(4f), dp(2f), dp(2f), paint)
+                    if (progress > 0f) { paint.color = white(a); c.drawRoundRect(w / 2 - bw / 2, y, w / 2 - bw / 2 + bw * progress.coerceIn(0f, 1f), y + dp(4f), dp(2f), dp(2f), paint) }
+                }
+            }
+            return e < 1.2f || (done && secs(doneAt) < 0.8f) || !done
+        }
+
+        // ---- receiver: the item springs out of the top and settles
+
+        private fun drawReceiver(c: Canvas): Boolean {
+            if (releasedAt == 0L) return false
+            val e = secs(releasedAt)
+            val rest = restRect()
+            val m = pt.johnny.bump.ui.theme.Motion.springStep(e, 0.62f, 0.72f)
+            val dot = dp(20f)
+            val tiny = RectF(origin.x - dot / 2, origin.y - dot / 2, origin.x + dot / 2, origin.y + dot / 2)
+            var rect = lerpRect(tiny, rest, m)
+            var radius = lerp(dot / 2, dp(26f), m.coerceIn(0f, 1f))
+            val a = pt.johnny.bump.ui.theme.Motion.easeOut(e / 0.18f)
+            var labels = pt.johnny.bump.ui.theme.Motion.easeOut((e - 0.3f) / 0.45f)
+            var expanding = false
+            if (expandAt != 0L) {
+                val se = secs(expandAt)
+                val q = pt.johnny.bump.ui.theme.Motion.springStep(se, 0.5f, 0.92f)
+                rect = lerpRect(rest, fullRect(), q)
+                radius = lerp(dp(26f), 0f, q.coerceIn(0f, 1f))
+                labels *= 1f - (q * 3f).coerceIn(0f, 1f)
+                expanding = true
+                if (!expandedFired && se > 0.42f) { expandedFired = true; post { onExpanded?.invoke() } }
+            }
+            drawItem(c, rect, radius, a)
+
+            if (!expanding && labels > 0f) {
+                when {
+                    error -> ring(c, rect, radius, 1f, Palette.DANGER, labels)
+                    done -> drawBadge(c, rect.right - dp(6f), rect.bottom - dp(6f), dp(19f), labels, Palette.SUCCESS, true, secs(doneAt))
+                    progress >= 0f -> { ring(c, rect, radius, 1f, Color.WHITE, .22f * labels); ring(c, rect, radius, progress, Color.WHITE, labels) }
+                }
+                val w = width.toFloat()
+                val maxW = w - dp(48f)
+                label(c, title, w / 2, rest.bottom + dp(48f), 21f, white(labels), bold, maxW)
+                label(c, name, w / 2, rest.bottom + dp(74f), 15f, white(.9f * labels), regular, maxW)
+                label(c, subtitle, w / 2, rest.bottom + dp(97f), 13f, if (error) withAlpha(Palette.DANGER, labels) else white(.65f * labels), regular, maxW)
+            }
+            return e < 1.6f || expanding && secs(expandAt) < 1.2f || done && secs(doneAt) < 0.8f
+        }
+
+        // ---- pieces
+
+        private fun drawItem(c: Canvas, rect: RectF, radius: Float, a: Float) {
+            if (a <= 0.003f || rect.width() < 1f) return
+            val alpha = (a.coerceIn(0f, 1f) * 255).toInt()
+            paint.setShadowLayer(dp(26f), 0f, dp(12f), Color.argb((alpha * .4f).toInt(), 0, 0, 0))
+            paint.color = Color.argb(alpha, 250, 251, 255)
+            c.drawRoundRect(rect, radius, radius, paint)
+            paint.clearShadowLayer()
+            val b = image
+            val kind = kind()
+            when {
+                b != null -> {
+                    val m = Matrix()
+                    val s = max(rect.width() / b.width, rect.height() / b.height)
+                    m.setScale(s, s)
+                    m.postTranslate(rect.centerX() - b.width * s / 2, rect.centerY() - b.height * s / 2)
+                    paint.shader = BitmapShader(b, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply { setLocalMatrix(m) }
+                    paint.alpha = alpha
+                    c.drawRoundRect(rect, radius, radius, paint)
+                    paint.shader = null; paint.alpha = 255
+                }
+                kind == Files.Kind.LINK -> {
+                    val host = subtitleHost()
+                    val k = rect.width() / dp(300f)
+                    if (k > 0.25f) {
+                        paint.color = withAlpha(Palette.ACCENT, a)
+                        c.drawCircle(rect.centerX(), rect.centerY() - rect.height() * .14f, rect.height() * .16f, paint)
+                        label(c, host.take(1).uppercase(), rect.centerX(), rect.centerY() - rect.height() * .14f + rect.height() * .06f, 26f * k, withAlpha(Color.WHITE, a), bold, rect.width())
+                        label(c, host, rect.centerX(), rect.centerY() + rect.height() * .2f, 17f * k, withAlpha(Palette.INK, a), medium, rect.width() - dp(20f) * k)
+                        label(c, name, rect.centerX(), rect.centerY() + rect.height() * .33f, 12f * k, withAlpha(Palette.MUTED, a), regular, rect.width() - dp(24f) * k)
+                    }
+                }
+                else -> {
+                    val tint = Palette.kindColor(kind)
+                    paint.color = withAlpha(tint, .14f * a)
+                    c.drawRoundRect(rect, radius, radius, paint)
+                    val k = rect.width() / dp(132f)
+                    if (k > 0.3f) label(c, kind.label, rect.centerX(), rect.centerY() + dp(8f) * k, 22f * k, withAlpha(tint, a), bold, rect.width())
+                }
+            }
+        }
+
+        /** Host to show on a link card: stored in [name] as "title" and in [linkHost]. */
+        var linkHost = ""
+        private fun subtitleHost() = linkHost.ifBlank { "link" }
+
+        private fun ring(c: Canvas, rect: RectF, radius: Float, fraction: Float, color: Int, a: Float) {
+            if (fraction <= 0f) return
+            val r = RectF(rect.left - dp(7f), rect.top - dp(7f), rect.right + dp(7f), rect.bottom + dp(7f))
+            val rr = radius + dp(7f)
+            paint.style = Paint.Style.STROKE; paint.strokeWidth = dp(3.5f); paint.strokeCap = Paint.Cap.ROUND
+            paint.color = withAlpha(color, a)
+            if (fraction >= 1f) c.drawRoundRect(r, rr, rr, paint)
+            else {
+                path.reset(); path.addRoundRect(r, rr, rr, Path.Direction.CW)
+                val pm = android.graphics.PathMeasure(path, false)
+                val seg = Path(); pm.getSegment(0f, pm.length * fraction, seg, true)
+                c.drawPath(seg, paint)
+            }
+            paint.style = Paint.Style.FILL
+        }
+
+        private fun drawBadge(c: Canvas, cx: Float, cy: Float, r: Float, a: Float, color: Int, check: Boolean, since: Float) {
+            if (r <= 0f) return
+            paint.color = withAlpha(color, a)
+            c.drawCircle(cx, cy, r, paint)
+            val k = pt.johnny.bump.ui.theme.Motion.easeOut((since / 0.55f).coerceIn(0f, 1f))
+            paint.style = Paint.Style.STROKE; paint.color = withAlpha(Color.WHITE, a)
+            paint.strokeWidth = r * 0.17f; paint.strokeCap = Paint.Cap.ROUND; paint.strokeJoin = Paint.Join.ROUND
+            path.reset()
+            val s = r / 17f
+            if (check) {
+                path.moveTo(cx - 7 * s, cy)
+                val a1 = min(1f, k * 2); path.lineTo(cx - 7 * s + 5 * s * a1, cy + 5 * s * a1)
+                if (k > .5f) { val a2 = (k - .5f) * 2; path.lineTo(cx - 2 * s + 10 * s * a2, cy + 5 * s - 11 * s * a2) }
+            } else {
+                path.moveTo(cx - 6 * s, cy - 6 * s); path.lineTo(cx + 6 * s, cy + 6 * s)
+                path.moveTo(cx + 6 * s, cy - 6 * s); path.lineTo(cx - 6 * s, cy + 6 * s)
+            }
+            c.drawPath(path, paint)
+            paint.style = Paint.Style.FILL
+            if (since in 0f..0.6f) postInvalidateOnAnimation()
+        }
+
+        private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
+        private fun lerpRect(a: RectF, b: RectF, t: Float) =
+            RectF(lerp(a.left, b.left, t), lerp(a.top, b.top, t), lerp(a.right, b.right, t), lerp(a.bottom, b.bottom, t))
+        private fun smooth(x: Float) = x.coerceIn(0f, 1f).let { it * it * (3 - 2 * it) }
+        private fun white(a: Float) = withAlpha(Color.WHITE, a)
         private fun withAlpha(color: Int, a: Float) = Color.argb((a.coerceIn(0f, 1f) * 255).toInt(), Color.red(color), Color.green(color), Color.blue(color))
 
-        private fun label(c: Canvas, value: String, x: Float, y: Float, sp: Float, color: Int, face: Typeface, maxW: Float, align: Paint.Align) {
+        private fun label(c: Canvas, value: String, x: Float, y: Float, sp: Float, color: Int, face: Typeface, maxW: Float) {
+            if (value.isEmpty() || maxW <= 0f) return
             text.typeface = face
             text.textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, sp, resources.displayMetrics)
             text.color = color
-            text.textAlign = align
+            text.textAlign = Paint.Align.CENTER
             var s = value
             if (text.measureText(s) > maxW) {
                 var end = s.length
@@ -510,6 +674,8 @@ class NameDropView(context: Context) : FrameLayout(context) {
             c.drawText(s, x, y, text)
         }
     }
+
+    fun setLinkHost(host: String) { hero.linkHost = host; hero.invalidate() }
 
     companion object {
         private const val GLOW_RELEASE = 0.35f

@@ -27,6 +27,13 @@ import java.util.concurrent.Executors
 
 enum class Phase { PREPARING, PERMISSIONS, RADIOS_OFF, SEARCHING, CONNECTING, PAIRING, READY, SENDING, SENT, ERROR }
 
+/** What the user shared: files, a web page (Chrome), or plain text. */
+sealed interface ShareInput {
+    data class Items(val uris: List<Uri>) : ShareInput
+    data class Link(val url: String, val title: String) : ShareInput
+    data class Text(val text: String) : ShareInput
+}
+
 data class Pairing(val endpointId: String, val name: String, val digits: String)
 
 data class ShareState(
@@ -54,6 +61,9 @@ data class ShareState(
     val manualQueued: Boolean = false,
     /** A jolt matched but BLE says the other device is far: ask for a firmer, closer touch. */
     val weakSignal: Boolean = false,
+    /** Large preview shown above the sheet and flown into the notch at the bump. */
+    val preview: android.graphics.Bitmap? = null,
+    val linkHost: String = "",
 )
 
 class ShareViewModel(application: Application) : AndroidViewModel(application), NearbyLink.Listener {
@@ -66,6 +76,11 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
     val state: StateFlow<ShareState> = _state.asStateFlow()
 
     private var staged: List<LocalFile> = emptyList()
+    private var linkItem: Msg.Link? = null
+    private var textItem: Msg.Text? = null
+    private var previewJpeg: ByteArray? = null
+    private var previewSentTo: String? = null
+    private val hasContent get() = staged.isNotEmpty() || linkItem != null || textItem != null
     private var link: NearbyLink? = null
     private val beacon = Beacon(application)
     private val motion = MotionSensor(application, ::onLocalJolt)
@@ -88,25 +103,45 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
         }
     }
 
-    fun load(uris: List<Uri>) {
+    fun load(input: ShareInput) {
         if (initialized) return
         initialized = true
+        when (input) {
+            is ShareInput.Link -> {
+                val host = runCatching { Uri.parse(input.url).host.orEmpty().removePrefix("www.") }.getOrDefault("")
+                linkItem = Msg.Link(input.url, input.title.ifBlank { host }.take(200))
+                _state.update { it.copy(fileCount = 1, firstName = input.title.ifBlank { host }, firstMime = Files.LINK_MIME, linkHost = host) }
+                begin()
+                return
+            }
+            is ShareInput.Text -> {
+                textItem = Msg.Text(input.text.take(pt.johnny.bump.link.Protocol.MAX_TEXT))
+                _state.update { it.copy(fileCount = 1, firstName = input.text.take(80), firstMime = Files.TEXT_MIME, totalBytes = input.text.length.toLong()) }
+                begin()
+                return
+            }
+            is ShareInput.Items -> Unit
+        }
+        val uris = (input as ShareInput.Items).uris
         if (uris.isEmpty()) { error("Escolhe um ficheiro para partilhar."); return }
         val first = uris.first()
+        val firstName = Files.displayName(ctx, first)
         _state.update {
             it.copy(
                 phase = Phase.PREPARING, fileCount = uris.size, firstUri = first,
-                firstName = Files.displayName(ctx, first),
-                firstMime = Files.mime(ctx, first, Files.displayName(ctx, first)),
+                firstName = firstName, firstMime = Files.mime(ctx, first, firstName),
                 title = "A preparar…",
             )
         }
         io.execute {
             try {
                 val files = uris.map { Files.stage(ctx, it) }
+                val preview = Previews.render(ctx, first, files.first())
+                val jpeg = preview?.let { Previews.jpeg(it) }
                 main.post {
                     staged = files
-                    _state.update { it.copy(totalBytes = files.sumOf { f -> f.size }) }
+                    previewJpeg = jpeg
+                    _state.update { it.copy(totalBytes = files.sumOf { f -> f.size }, preview = preview) }
                     begin()
                 }
             } catch (e: Exception) {
@@ -117,7 +152,7 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
 
     /** Called again after permissions are granted or radios switched on. */
     fun begin() {
-        if (staged.isEmpty() || link != null) return
+        if (!hasContent || link != null) return
         if (!Permissions.granted(ctx)) { _state.update { it.copy(phase = Phase.PERMISSIONS, title = "Autoriza dispositivos próximos") }; return }
         val radios = Radios.state(ctx)
         if (!radios.ready) { _state.update { it.copy(phase = Phase.RADIOS_OFF, radios = radios, title = "Liga o Bluetooth e o Wi-Fi") }; return }
@@ -158,11 +193,19 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
 
     private fun arm() {
         val l = link ?: return
-        val first = staged.firstOrNull() ?: return
         triggered = false
         matcher.reset()
         rssi = RssiGate(app.settings.current.rssiThreshold)
-        l.send(Msg.Arm(staged.size, staged.sumOf { it.size }, first.name, first.mime))
+        val first = staged.firstOrNull()
+        when {
+            first != null -> l.send(Msg.Arm(staged.size, staged.sumOf { it.size }, first.name, first.mime))
+            linkItem != null -> l.send(Msg.Arm(1, 0, _state.value.linkHost.ifBlank { "link" }, Files.LINK_MIME))
+            textItem != null -> l.send(Msg.Arm(1, textItem!!.text.length.toLong(), "Texto", Files.TEXT_MIME))
+            else -> return
+        }
+        // Push the preview now, silently, so it is already on the other side when they touch.
+        val peer = l.peer?.id
+        if (previewJpeg != null && previewSentTo != peer) { l.sendPreview(previewJpeg!!); previewSentTo = peer }
         if (motion.available) motion.start(app.settings.senderThreshold())
         main.removeCallbacks(syncLoop)
         main.postDelayed(syncLoop, 1200)
@@ -197,7 +240,7 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
 
     private fun trigger(reason: String) {
         val l = link ?: return
-        if (triggered || !l.authenticated || staged.isEmpty()) return
+        if (triggered || !l.authenticated || !hasContent) return
         triggered = true
         motion.stop(); beacon.stopScan(); main.removeCallbacks(syncLoop)
         l.send(Msg.Go(reason))
@@ -208,7 +251,17 @@ class ShareViewModel(application: Application) : AndroidViewModel(application), 
         main.removeCallbacks(nobodyTimeout)
         sendStartedAt = SystemClock.elapsedRealtime()
         _state.update { it.copy(phase = Phase.SENDING, title = "A enviar", hint = "", progress = 0f, waveTick = it.waveTick + 1) }
-        l.sendFiles(staged)
+        val peerName = l.peer?.name.orEmpty()
+        val linkMsg = linkItem; val textMsg = textItem
+        when {
+            linkMsg != null -> {
+                l.send(linkMsg); l.send(Msg.Done)
+                app.transfers.add(pt.johnny.bump.data.Transfer(java.util.UUID.randomUUID().toString(), pt.johnny.bump.data.Direction.SENT, linkMsg.title, Files.LINK_MIME, 0, linkMsg.url, peerName, System.currentTimeMillis()))
+                onSendFinished(1)
+            }
+            textMsg != null -> { l.send(textMsg); l.send(Msg.Done); onSendFinished(1) }
+            else -> l.sendFiles(staged)
+        }
     }
 
     // ---------- link callbacks ----------
