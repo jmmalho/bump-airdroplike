@@ -1,0 +1,8 @@
+<resources>
+    <color name="pearl">#F4F6FB</color>
+    <color name="night">#080C16</color>
+    <color name="brand_blue">#1F6BFF</color>
+    <color name="brand_blue_light">#8DB1FF</color>
+    <color name="icon_bg_start">#1F6BFF</color>
+    <color name="icon_bg_end">#8A7CFF</color>
+</resources>
